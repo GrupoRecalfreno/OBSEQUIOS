@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CONTROL DE OBSEQUIOS GRUPO RECALFRENO</title>
+    
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
+        import { getDatabase, ref, onValue, update } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js";
+        
+        // --- Importación de la librería SheetJS para la exportación a XLSX ---
+        import * as XLSX from 'https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs'; 
+
+        // --- 1. CONFIGURACIÓN DE FIREBASE ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyBYSt2BsM0J7XQ1NlN91O3MN61K2c_Ps2U", 
+            authDomain: "controlmercaderia.firebaseapp.com",
+            databaseURL: "https://controlmercaderia-default-rtdb.firebaseio.com",
+            projectId: "controlmercaderia",
+            storageBucket: "controlmercaderia.firebasestorage.app",
+            messagingSenderId: "561756099812",
+            appId: "1:561756099812:web:6d7b7eedfe2ce7b6d188f1",
+            measurementId: "G-JEYBE69XG7"
+        };
+
+        // Inicializar Firebase
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+        
+        let firebaseClients = {};
+        let inventory = {};
+
+        const getEcuadorTime = () => {
+            return new Date().toLocaleString("es-EC", {
+                timeZone: 'America/Guayaquil',
+                day: '2-digit', month: '2-digit', year: 'numeric',
+                hour: '2-digit', minute: '2-digit', second: '2-digit',
+                hour12: false
+            }).replace(',', ' –');
+        };
+
+        const getGiftsForTop = (topCategory) => {
+            const gifts = {
+                "TOP 1": "ESFERO, MOCHILA, FRANELA, REGALO",
+                "TOP 2": "ESFERO, MOCHILA, FRANELA, GORRA, MANDIL",
+                "TOP 3": "ESFERO, MOCHILA, FRANELA, GORRA, CAMISETA",
+                "TOP 4": "ESFERO, MOCHILA, FRANELA, CAMISETA",
+                "TOP 5": "ESFERO, MOCHILA, FRANELA, GORRA",
+                "TOP 6": "ESFERO, MOCHILA, FRANELA"
+            };
+            return gifts[topCategory.toUpperCase()] || "NINGUNO";
+        };
+
+        const parseDateString = (dateStr) => {
+            if (!dateStr) return new Date(0);
+            const parts = dateStr.split(/[\/\–\s:]+/);
+            if (parts.length >= 6) {
+                const [d, m, y, h, min, s] = parts;
+                return new Date(y, m - 1, d, h, min, s);
+            }
+            return new Date(dateStr);
+        };
+
+        const loadFirebaseData = () => {
+            onValue(ref(db, 'clientes'), (snapshot) => {
+                firebaseClients = snapshot.val() || {};
+                console.log("Clientes cargados/actualizados.");
+                updateAllViews();
+            }, (error) => {
+                console.error("Error al cargar clientes:", error);
+                document.getElementById('loading').textContent = 'Error al cargar clientes.';
+            });
+
+            onValue(ref(db, 'inventario_obsequios'), (snapshot) => {
+                inventory = snapshot.val() || {};
+                console.log("Inventario cargado/actualizado.");
+                updateInventoryDisplay();
+                if (Object.keys(firebaseClients).length > 0) {
+                   updateStatsTables();
+                }
+            }, (error) => {
+                console.error("Error al cargar inventario:", error);
+            });
+
+            document.getElementById('loading').style.display = 'none';
+        };
+
+        const updateAllViews = () => {
+            renderTable('sent-table-body', 'ENVIADO');
+            renderTable('confirmed-table-body', 'CONFIRMADO');
+            renderManualTable();
+            updateStatsTables();
+            const activeTab = document.querySelector('.tab-button.active');
+            if (activeTab) {
+                 activeTab.dispatchEvent(new Event('click')); 
+            }
+        };
+
+        const renderTable = (tbodyId, statusFilter) => {
+            const tbody = document.getElementById(tbodyId);
+            tbody.innerHTML = '';
+            
+            let filteredData = Object.entries(firebaseClients)
+                .filter(([key, client]) => (client.ESTADO_ENVIO || '').toUpperCase() === statusFilter);
+
+            const dateField = statusFilter === 'ENVIADO' ? 'FECHA_ENVIO' : 'FECHA_CONFIRMACION';
+            filteredData.sort(([, a], [, b]) => 
+                parseDateString(b[dateField]).getTime() - parseDateString(a[dateField]).getTime()
+            );
+
+            filteredData.forEach(([key, client]) => {
+                const row = tbody.insertRow();
+                row.className = statusFilter === 'ENVIADO' ? 'estado-enviado' : 'estado-confirmado';
+
+                const tipoEnvioFull = (client.TIPO_ENVIO || '').toUpperCase();
+                const tipoEnvio = tipoEnvioFull ? `ENVIADO A ${tipoEnvioFull}` : '';
+                const vendedores = `${client["VENDEDOR 1"] || 'N/A'} / ${client["VENDEDOR 2"] || 'N/A'}`;
+                const giftsStr = client.OBSEQUIOS_ENVIADOS || 'NINGUNO';
+                const top = client.TOP || 'N/A';
+
+                if (statusFilter === 'ENVIADO') {
+                    row.insertCell().appendChild(createButton('CONFIRMAR ENVIO', '#89CFF0', () => registerConfirmation(key)));
+                    
+                    row.insertCell().textContent = top;
+                    row.insertCell().textContent = client.RUC_VAT || 'N/A';
+                    row.insertCell().textContent = client.CLIENTE || 'N/A';
+                    row.insertCell().textContent = giftsStr;
+                    row.insertCell().textContent = tipoEnvio;
+                    row.insertCell().textContent = vendedores;
+                    row.insertCell().textContent = client.FECHA_ENVIO || '';
+                    
+                    row.insertCell().appendChild(createButton('ELIMINAR', '#ffcccc', () => revertStatus(key, 'ENVIADO', giftsStr, top)));
+                
+                } else if (statusFilter === 'CONFIRMADO') {
+                    row.insertCell().textContent = '✅'; 
+                    row.insertCell().textContent = top;
+                    row.insertCell().textContent = client.CLIENTE || 'N/A';
+                    row.insertCell().textContent = giftsStr;
+                    row.insertCell().textContent = tipoEnvio;
+                    row.insertCell().textContent = vendedores;
+                    row.insertCell().textContent = client.FECHA_CONFIRMACION || '';
+                    
+                    row.insertCell().appendChild(createButton('ELIMINAR', '#ffcccc', () => revertStatus(key, 'CONFIRMADO', giftsStr, top)));
+                }
+            });
+            
+            if (filteredData.length === 0) {
+                 tbody.innerHTML = `<tr><td colspan="${statusFilter === 'ENVIADO' ? 9 : 8}" style="text-align: center;">No hay clientes en estado ${statusFilter}.</td></tr>`;
+            }
+        };
+
+        const renderManualTable = (filterText = '') => {
+            const tbody = document.getElementById('manual-table-body');
+            const searchInput = document.getElementById('search-input');
+            
+            const currentFilter = (filterText || searchInput.value).toUpperCase(); 
+            
+            tbody.innerHTML = '';
+            
+            let filteredData = Object.entries(firebaseClients)
+                .filter(([key, client]) => {
+                    const clientName = (client.CLIENTE || '').toUpperCase();
+                    const rucVat = (client.RUC_VAT || '').toUpperCase();
+                    return clientName.includes(currentFilter) || rucVat.includes(currentFilter);
+                });
+
+            filteredData.sort(([, a], [, b]) => {
+                const topA = a.TOP || 'Z';
+                const topB = b.TOP || 'Z';
+                if (topA !== topB) return topA.localeCompare(topB);
+                const clientA = a.CLIENTE || 'Z';
+                const clientB = b.CLIENTE || 'Z';
+                return clientA.localeCompare(clientB);
+            });
+            
+            filteredData.forEach(([key, client]) => {
+                const row = tbody.insertRow();
+                const status = (client.ESTADO_ENVIO || 'PENDIENTE').toUpperCase(); 
+                
+                let statusText = '';
+                let bgColor = '';
+                let tipoEnvio = '';
+                
+                const tipoEnvioFull = (client.TIPO_ENVIO || '').toUpperCase(); 
+                
+                if (status === 'CONFIRMADO') {
+                    statusText = 'CONFIRMADO';
+                    bgColor = '#3CB371';
+                } else if (status === 'ENVIADO') {
+                    statusText = 'ENVIADO';
+                    bgColor = '#5F9EA0';
+                } else {
+                     statusText = 'PENDIENTE';
+                     bgColor = ''; 
+                }
+                
+                if (['ENVIADO', 'CONFIRMADO'].includes(status) && tipoEnvioFull) {
+                    tipoEnvio = `ENVIADO A ${tipoEnvioFull}`;
+                }
+
+                const top = client.TOP || 'N/A';
+                const giftsStr = client.OBSEQUIOS_ENVIADOS || 'N/A';
+                const vendedores = `${client["VENDEDOR 1"] || 'N/A'} / ${client["VENDEDOR 2"] || 'N/A'}`;
+                
+                row.insertCell().appendChild(createButton('REGISTRAR ENVIO', '#ADD8E6', () => registerShipment(key, top, 'CLIENTE')));
+                
+                row.insertCell().appendChild(createButton('ENVIAR A VENDEDOR', '#FFFF99', () => registerShipment(key, top, 'VENDEDOR')));
+                
+                row.insertCell().appendChild(createCellItem(statusText, bgColor));
+                
+                row.insertCell().textContent = top;
+                
+                row.insertCell().textContent = client.CLIENTE || 'N/A';
+                
+                row.insertCell().textContent = giftsStr;
+                
+                row.insertCell().textContent = tipoEnvio;
+                
+                row.insertCell().textContent = vendedores;
+
+                row.insertCell().appendChild(createButton('EDITAR', '#CCCCFF', () => openEditDialog(key)));
+
+                if (bgColor && status !== 'PENDIENTE') {
+                    Array.from(row.cells).forEach(cell => {
+                        if (!cell.querySelector('button')) { 
+                           cell.style.backgroundColor = bgColor;
+                        }
+                    });
+                }
+            });
+        };
+
+        const createButton = (text, color, onClick) => {
+            const button = document.createElement('button');
+            button.textContent = text;
+            button.className = 'table-button';
+            button.style.backgroundColor = color;
+            button.onclick = (e) => {
+                e.stopPropagation();
+                onClick();
+            };
+            return button;
+        };
+
+        const createCellItem = (text, color) => {
+            const div = document.createElement('div');
+            div.textContent = text;
+            div.style.backgroundColor = color || 'transparent';
+            div.style.padding = '5px 10px';
+            div.style.borderRadius = '3px';
+            div.style.textAlign = 'center';
+            div.style.fontWeight = 'bold';
+            div.style.color = color ? 'white' : 'black'; 
+            return div;
+        };
+        
+        // --- FUNCIONES DE MANEJO DE ESTADOS (sin cambios) ---
+
+        const registerShipment = (key, top, shipmentType) => {
+            const client = firebaseClients[key];
+            if (client.ESTADO_ENVIO !== 'PENDIENTE' && client.ESTADO_ENVIO) {
+                alert(`Error: Este cliente ya tiene un envío en estado ${client.ESTADO_ENVIO}.`);
+                return;
+            }
+
+            const giftsStr = getGiftsForTop(top);
+            const gifts = giftsStr.split(',').map(g => g.trim()).filter(g => g && g !== 'NINGUNO');
+            const updates = {};
+            let canShip = true;
+
+            gifts.forEach(g => {
+                const invKey = Object.keys(inventory).find(k => k.toUpperCase() === g.toUpperCase());
+                if (invKey) {
+                    const current = inventory[invKey].ACTUAL || 0;
+                    if (current <= 0) {
+                        alert(`SIN STOCK: ${g}. No se puede registrar el envío.`);
+                        canShip = false;
+                    }
+                    updates[`inventario_obsequios/${invKey}/ACTUAL`] = current - 1;
+                }
+            });
+
+            if (!canShip) return;
+
+            updates[`clientes/${key}/ESTADO_ENVIO`] = "ENVIADO";
+            updates[`clientes/${key}/FECHA_ENVIO`] = getEcuadorTime();
+            updates[`clientes/${key}/TIPO_ENVIO`] = shipmentType.toUpperCase();
+            
+            if (!client.OBSEQUIOS_ENVIADOS) {
+                 updates[`clientes/${key}/OBSEQUIOS_ENVIADOS`] = giftsStr;
+            }
+
+            update(ref(db), updates)
+                .then(() => alert(`ENVÍO A ${shipmentType.toUpperCase()} REGISTRADO Y STOCK DESCONTADO.`))
+                .catch(error => alert(`ERROR al registrar envío: ${error.message}`));
+        };
+
+        const registerConfirmation = (key) => {
+             const updates = {};
+             updates[`clientes/${key}/ESTADO_ENVIO`] = "CONFIRMADO";
+             updates[`clientes/${key}/FECHA_CONFIRMACION`] = getEcuadorTime();
+             
+             update(ref(db), updates)
+                .then(() => alert('CONFIRMADO.'))
+                .catch(error => alert(`ERROR al confirmar: ${error.message}`));
+        };
+
+        const revertStatus = (key, currentStatus, giftsStr, top) => {
+            if (!confirm(`¿ESTÁS SEGURO DE ELIMINAR ESTE REGISTRO? Esto revertirá el estado y el stock (si aplica).`)) return;
+
+            const updates = {};
+            
+            if (currentStatus === "CONFIRMADO") {
+                updates[`clientes/${key}/ESTADO_ENVIO`] = "ENVIADO";
+                updates[`clientes/${key}/FECHA_CONFIRMACION`] = ""; 
+            } else if (currentStatus === "ENVIADO") {
+                updates[`clientes/${key}/ESTADO_ENVIO`] = "PENDIENTE";
+                updates[`clientes/${key}/FECHA_ENVIO`] = "";
+                updates[`clientes/${key}/TIPO_ENVIO`] = ""; 
+                
+                const gifts = giftsStr.split(',').map(g => g.trim()).filter(g => g && g !== 'NINGUNO');
+                gifts.forEach(g => {
+                    const invKey = Object.keys(inventory).find(k => k.toUpperCase() === g.toUpperCase());
+                    if (invKey) {
+                        const current = inventory[invKey].ACTUAL || 0;
+                        updates[`inventario_obsequios/${invKey}/ACTUAL`] = current + 1;
+                    }
+                });
+            }
+
+            update(ref(db), updates)
+                .then(() => alert('REGISTRO REVERTIDO Y STOCK AJUSTADO.'))
+                .catch(error => alert(`FALLO AL REVERTIR: ${error.message}`));
+        };
+
+        const openEditDialog = (key) => {
+            const client = firebaseClients[key];
+            if (!client) {
+                alert("No se encontraron datos del cliente.");
+                return;
+            }
+
+            const currentStatus = (client.ESTADO_ENVIO || '').toUpperCase();
+            
+            if (["ENVIADO", "CONFIRMADO"].includes(currentStatus)) {
+                alert("ALERTA: Únicamente se puede editar clientes que no han sido enviados (STATUS PENDIENTE).");
+                return;
+            }
+
+            const newClient = prompt("Nuevo Nombre/Cliente:", client.CLIENTE || '');
+            const newTop = prompt("Nuevo TOP (Ej: TOP 1):", client.TOP || '');
+            const newGifts = prompt("Nuevos Obsequios (Separados por coma):", client.OBSEQUIOS_ENVIADOS || '');
+            const newRuc = prompt("Nuevo RUC (RUC_VAT):", client.RUC_VAT || '');
+            const newV1 = prompt("Nuevo Vendedor 1:", client["VENDEDOR 1"] || '');
+            const newV2 = prompt("Nuevo Vendedor 2:", client["VENDEDOR 2"] || '');
+
+            if (newClient === null) return; 
+
+            saveManualEdit(key, newClient, newTop, newGifts, newRuc, newV1, newV2);
+        };
+
+        const saveManualEdit = (key, client, top, gifts, ruc, v1, v2) => {
+            const updates = {
+                "CLIENTE": client.toUpperCase().trim(),
+                "TOP": top.toUpperCase().trim(),
+                "OBSEQUIOS_ENVIADOS": gifts.toUpperCase().trim(),
+                "RUC_VAT": ruc.toUpperCase().trim(),
+                "VENDEDOR 1": v1.toUpperCase().trim(),
+                "VENDEDOR 2": v2.toUpperCase().trim(),
+            };
+
+            update(ref(db, `clientes/${key}`), updates)
+                .then(() => alert("Datos actualizados en Firebase."))
+                .catch(error => alert(`Error al guardar: ${error.message}`));
+        };
+
+        // --- FUNCIONES DE EXPORTACIÓN A XLSX ---
+
+        const exportAllToXLSX = () => {
+            if (Object.keys(firebaseClients).length === 0) {
+                alert("No hay datos de clientes para exportar.");
+                return;
+            }
+
+            const exportHeaders = [
+                'ID_FIREBASE', 'RUC_VAT', 'CLIENTE', 'TOP', 'ESTADO_ENVIO', 
+                'OBSEQUIOS_ENVIADOS', 'TIPO_ENVIO', 'VENDEDOR 1', 'VENDEDOR 2', 
+                'FECHA_ENVIO', 'FECHA_CONFIRMACION'
+            ];
+            
+            const exportData = Object.entries(firebaseClients).map(([key, client]) => ({
+                'ID_FIREBASE': key,
+                'RUC_VAT': client.RUC_VAT || 'N/A',
+                'CLIENTE': client.CLIENTE || 'N/A',
+                'TOP': client.TOP || 'N/A',
+                'ESTADO_ENVIO': client.ESTADO_ENVIO || 'PENDIENTE',
+                'OBSEQUIOS_ENVIADOS': client.OBSEQUIOS_ENVIADOS || 'N/A',
+                'TIPO_ENVIO': client.TIPO_ENVIO || 'N/A',
+                'VENDEDOR 1': client["VENDEDOR 1"] || 'N/A',
+                'VENDEDOR 2': client["VENDEDOR 2"] || 'N/A',
+                'FECHA_ENVIO': client.FECHA_ENVIO || '',
+                'FECHA_CONFIRMACION': client.FECHA_CONFIRMACION || ''
+            }));
+
+            const ws = XLSX.utils.json_to_sheet(exportData, { header: exportHeaders });
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Reporte Clientes");
+            
+            const defaultName = `Reporte_Obsequios_Clientes_${new Date().toLocaleDateString('es-EC').replace(/\//g, '')}.xlsx`;
+            
+            XLSX.writeFile(wb, defaultName);
+            alert(`Datos exportados exitosamente como ${defaultName}`);
+        };
+
+
+        // --- RENDERING DE ESTADÍSTICAS Y CONTADORES ---
+        
+        const updateInventoryDisplay = () => {
+            const container = document.getElementById('inventory-container');
+            container.innerHTML = '';
+            const colors = ["#FFCDD2", "#C8E6C9", "#BBDEFB", "#FFF9C4", "#D1C4E9", "#B2DFDB", "#FFCCBC"];
+            const iconMap = {
+                "ESFERO": "✍️", "MOCHILA": "🎒", "FRANELA": "👕", "REGALO": "🎁", 
+                "GORRA": "🧢", "MANDIL": "🎽", "CAMISETA": "👕"
+            };
+            let colorIdx = 0;
+
+            Object.entries(inventory).forEach(([gift, data]) => {
+                const initial = data.INICIAL || 0;
+                const current = data.ACTUAL || 0;
+                let colorBg = colors[colorIdx % colors.length];
+
+                if (current <= 10) colorBg = "#FF9999"; 
+                else if (initial > 0 && current <= (initial * 0.1)) colorBg = "#FFCC99";
+ 
+                const frame = document.createElement('div');
+                frame.className = 'inventory-frame';
+                frame.style.backgroundColor = colorBg;
+
+                const icon = iconMap[gift.toUpperCase()] || "🎁";
+                frame.innerHTML = `
+                    <div class="inventory-name"><b>${icon} ${gift.toUpperCase()}</b></div>
+                    <div class="inventory-count" style="color: ${current <= 10 ? 'darkred' : 'black'};">${current}/${initial}</div>
+                `;
+                container.appendChild(frame);
+                colorIdx++;
+            });
+        };
+
+        const calculateTopStats = () => {
+            const stats = {
+                "TOP 1": {"TOTAL": 0, "ENVIADO": 0, "CONFIRMADO": 0, "PENDIENTE": 0},
+                "TOP 2": {"TOTAL": 0, "ENVIADO": 0, "CONFIRMADO": 0, "PENDIENTE": 0},
+                "TOP 3": {"TOTAL": 0, "ENVIADO": 0, "CONFIRMADO": 0, "PENDIENTE": 0},
+                "TOP 4": {"TOTAL": 0, "ENVIADO": 0, "CONFIRMADO": 0, "PENDIENTE": 0},
+                "TOP 5": {"TOTAL": 0, "ENVIADO": 0, "CONFIRMADO": 0, "PENDIENTE": 0},
+                "TOP 6": {"TOTAL": 0, "ENVIADO": 0, "CONFIRMADO": 0, "PENDIENTE": 0},
+            };
+            
+            Object.values(firebaseClients).forEach(val => {
+                const top = val.TOP || 'N/A';
+                const status = (val.ESTADO_ENVIO || 'PENDIENTE').toUpperCase();
+                
+                if (stats[top]) {
+                    stats[top]["TOTAL"] += 1;
+                    if (status in stats[top]) {
+                        stats[top][status] += 1;
+                    } else {
+                        stats[top]["PENDIENTE"] += 1;
+                    }
+                }
+            });
+            return stats;
+        };
+
+        const updateStatsTables = () => {
+            const topStats = calculateTopStats();
+            const topTable = document.getElementById('stats-top-table-body');
+            topTable.innerHTML = '';
+            
+            const TOP_COLORS = {"CONFIRMADO": "#3CB371", "ENVIADO": "#5F9EA0", "PENDIENTE": "#F0E68C"};
+
+            Object.entries(topStats).forEach(([top, data]) => {
+                const row = topTable.insertRow();
+                row.insertCell().textContent = top;
+                row.insertCell().textContent = data.TOTAL;
+
+                row.insertCell().appendChild(createCellItem(data.ENVIADO, TOP_COLORS.ENVIADO));
+                row.insertCell().appendChild(createCellItem(data.CONFIRMADO, TOP_COLORS.CONFIRMADO));
+            });
+            
+            const invTable = document.getElementById('stats-inventory-table-body');
+            invTable.innerHTML = '';
+            
+            Object.entries(inventory).forEach(([gift, data]) => {
+                const initial = data.INICIAL || 0;
+                const current = data.ACTUAL || 0;
+                const consumed = initial - current;
+                
+                let color = "";
+                if (current <= 10) color = "#FF9999"; 
+                else if (initial > 0 && current <= (initial * 0.1)) color = "#FFCC99";
+
+                const row = invTable.insertRow();
+                row.insertCell().textContent = gift.toUpperCase();
+                
+                row.insertCell().appendChild(createCellItem(`${current} / ${initial}`, color));
+                row.insertCell().appendChild(createCellItem(`${consumed} unidades`, "#ADD8E6"));
+            });
+        };
+
+        // --- CONFIGURACIÓN DE PESTAÑAS (TABS) ---
+
+        const setupTabs = () => {
+            const tabsContainer = document.getElementById('tabs-container');
+            const tabContents = document.querySelectorAll('.tab-content');
+            
+            tabsContainer.querySelectorAll('.tab-button').forEach(button => {
+                button.addEventListener('click', () => {
+                    const target = button.dataset.target;
+                    
+                    tabsContainer.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+                    tabContents.forEach(content => content.classList.remove('active'));
+
+                    button.classList.add('active');
+                    document.getElementById(target).classList.add('active');
+                    
+                    if (target === 'obsequios-enviados') renderTable('sent-table-body', 'ENVIADO');
+                    if (target === 'envios-confirmados') renderTable('confirmed-table-body', 'CONFIRMADO');
+                    if (target === 'envios-manuales') renderManualTable();
+                    if (target === 'estadisticas') updateStatsTables();
+                });
+            });
+
+            document.querySelector('.tab-button').click();
+        };
+
+        window.addEventListener('load', () => {
+            loadFirebaseData();
+            setupTabs();
+            document.getElementById('search-input').addEventListener('input', (e) => renderManualTable(e.target.value));
+            // Event listener para el botón de exportar reubicado
+            document.getElementById('export-clients-btn').addEventListener('click', exportAllToXLSX);
+        });
+    </script>
+
+    <style>
+        /* Estilos Base */
+        body { font-family: 'Inter', Arial, sans-serif; margin: 0; padding: 20px; background-color: #f4f4f9; color: #333; }
+        h1 { color: #1a237e; border-bottom: 3px solid #b3e5fc; padding-bottom: 10px; margin-bottom: 20px; }
+        
+        /* Contenedor principal de Inventario y Botón de Exportación */
+        #inventory-and-export-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap; /* Permite que los elementos se envuelvan en pantallas pequeñas */
+            margin-bottom: 20px;
+        }
+
+        /* Contenedor de Inventario */
+        #inventory-container { 
+            display: flex; 
+            gap: 10px; 
+            flex-wrap: wrap;
+            margin-top: 10px;
+            flex-grow: 1; /* Permite que ocupe el espacio disponible */
+        }
+        .inventory-frame { 
+            padding: 8px 15px; 
+            border-radius: 8px; 
+            border: 1px solid #999; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            min-width: 120px;
+            text-align: center;
+        }
+
+        /* Contenedor del botón de exportar (ubicación final) */
+        .export-btn-container {
+            margin-top: 10px;
+            margin-left: 20px;
+            padding: 0;
+            flex-shrink: 0; /* Evita que el botón se comprima */
+        }
+        .export-btn {
+            padding: 10px 20px;
+            background-color: #2e7d32; 
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background-color 0.3s;
+        }
+        .export-btn:hover {
+            background-color: #388e3c;
+        }
+
+
+        /* Estilos de Pestañas */
+        #tabs-container { display: flex; gap: 5px; border-bottom: 2px solid #ccc; margin-bottom: 10px; overflow-x: auto; }
+        .tab-button {
+            padding: 10px 20px;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            background-color: #e0e0e0;
+            border-top-left-radius: 8px;
+            border-top-right-radius: 8px;
+            transition: background-color 0.3s;
+            flex-shrink: 0; 
+        }
+        .tab-button.active { background-color: #ADD8E6; border-bottom: 2px solid #ADD8E6; color: #1a237e; }
+        .tab-content { display: none; padding: 15px 0; }
+        .tab-content.active { display: block; }
+        
+        /* Estilos de Tabla */
+        .table-container { overflow-x: auto; } 
+        table { width: 100%; min-width: 800px; border-collapse: collapse; margin-top: 10px; background-color: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        
+        /* AJUSTE: Reducir padding de celda y mantener nowrap */
+        th, td { padding: 6px 8px; border: 1px solid #e0e0e0; text-align: center; white-space: nowrap; }
+        th { background-color: #4db6ac; color: white; font-weight: bold; text-transform: uppercase; }
+        
+        /* --- AJUSTES DE TAMAÑO DE COLUMNA Y TEXTO --- */
+        
+        /* Columna CLIENTE (4ta en Enviados, 3ra en Confirmados, 5ta en Manuales) */
+        #obsequios-enviados table td:nth-child(4),
+        #envios-confirmados table td:nth-child(3),
+        #envios-manuales table td:nth-child(5) {
+            max-width: 200px; 
+            overflow: hidden; 
+            text-overflow: ellipsis; 
+            white-space: nowrap; 
+            text-align: left; 
+        }
+
+        /* Columna RUC (3ra en Enviados) */
+        #obsequios-enviados table td:nth-child(3) {
+            max-width: 100px; 
+            overflow: hidden; 
+            text-overflow: ellipsis; 
+            white-space: nowrap; 
+        }
+        
+        /* Estilos de Botones en Tabla */
+        .table-button {
+            padding: 5px 8px; 
+            font-size: 0.9em; 
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            color: black;
+            transition: opacity 0.3s;
+            width: 100%;
+        }
+
+        /* Colores de estado (filas) */
+        .estado-enviado { background-color: #e3f2fd; } 
+        .estado-confirmado { background-color: #e8f5e9; } 
+
+        /* Estilos para la tabla manual */
+        .search-bar { display: flex; gap: 10px; margin-bottom: 15px; align-items: center; }
+        .search-bar input { padding: 8px; width: 300px; border: 1px solid #ccc; border-radius: 4px; }
+        
+        /* --- AJUSTE: Tablas de Estadísticas Compactas y Separadas --- */
+        #estadisticas .stats-container {
+            display: flex;
+            gap: 30px; /* Aumentar separación horizontal */
+            flex-wrap: wrap;
+        }
+        #estadisticas .stats-group {
+            flex: 1; 
+            min-width: 300px;
+            margin-bottom: 20px;
+        }
+
+        #estadisticas table {
+            width: 100%;
+            min-width: 0; 
+        }
+        #estadisticas th, #estadisticas td {
+            padding: 4px 6px; 
+        }
+
+        /* OPTIMIZACIÓN MÓVIL */
+        @media (max-width: 768px) {
+            body { padding: 10px; }
+            h1 { font-size: 1.5em; }
+            
+            #inventory-and-export-container {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .export-btn-container {
+                margin-left: 0;
+                margin-top: 15px;
+                text-align: center;
+                width: 100%;
+            }
+
+            .inventory-frame { padding: 5px 10px; min-width: 100px; }
+            
+            table { font-size: 0.75em; } 
+            th, td { padding: 4px 6px; } 
+
+            .search-bar { flex-direction: column; align-items: flex-start; }
+            .search-bar input { width: 100%; margin-top: 5px; }
+            
+            .table-button { font-size: 0.8em; padding: 3px 6px; }
+            
+            /* Ajuste de estadísticas en móvil */
+            #estadisticas .stats-container {
+                flex-direction: column;
+                gap: 0;
+            }
+            #estadisticas .stats-group {
+                min-width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <h1>CONTROL DE OBSEQUIOS GRUPO RECALFRENO</h1>
+    
+    <div id="loading" class="loading">Cargando datos de Firebase...</div>
+    
+    <div id="inventory-and-export-container">
+        <div>
+            <h2>🎒 Inventario Actual</h2>
+            <div id="inventory-container">
+                </div>
+        </div>
+        
+        <div class="export-btn-container">
+            <button id="export-clients-btn" class="export-btn">
+                Exportar Todos los Datos a Excel (XLSX) 💾
+            </button>
+        </div>
+    </div>
+    
+    <div id="tabs-container">
+        <button class="tab-button" data-target="obsequios-enviados">📦 OBSEQUIOS ENVIADOS</button>
+        <button class="tab-button" data-target="envios-confirmados">✅ ENVIOS CONFIRMADOS</button>
+        <button class="tab-button" data-target="envios-manuales">🔍 ENVIOS MANUALES</button>
+        <button class="tab-button" data-target="estadisticas">📊 ESTADÍSTICAS</button>
+    </div>
+
+    <div class="tab-content" id="obsequios-enviados">
+        <h2>Obsequios Enviados (Status: ENVIADO)</h2>
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ACCIÓN</th><th>TOP</th><th>RUC</th><th>CLIENTE</th><th>OBSEQUIOS</th><th>TIPO DE ENVIO</th><th>VENDEDORES</th><th>FECHA ENVÍO</th><th>ELIMINAR</th>
+                    </tr>
+                </thead>
+                <tbody id="sent-table-body"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="tab-content" id="envios-confirmados">
+        <h2>Envios Confirmados (Status: CONFIRMADO)</h2>
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ACCIÓN</th><th>TOP</th><th>CLIENTE</th><th>OBSEQUIOS</th><th>TIPO DE ENVIO</th><th>VENDEDORES</th><th>FECHA CONFI.</th><th>ELIMINAR</th>
+                    </tr>
+                </thead>
+                <tbody id="confirmed-table-body"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="tab-content" id="envios-manuales">
+        <h2>Control de Clientes (TODOS)</h2>
+        <div class="search-bar">
+            <label>BUSCAR CLIENTE (NOMBRE/RUC):</label>
+            <input type="text" id="search-input" placeholder="ESCRIBE PARA FILTRAR...">
+        </div>
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>REGISTRAR ENVIO</th><th>ENVIAR A VENDEDOR</th><th>STATUS</th><th>TOP</th><th>CLIENTE</th><th>OBSEQUIOS</th><th>TIPO DE ENVIO</th><th>VENDEDORES</th><th>EDITAR</th>
+                    </tr>
+                </thead>
+                <tbody id="manual-table-body"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="tab-content" id="estadisticas">
+        <h2>📊 ESTADÍSTICAS Y REPORTES</h2>
+        
+        <div class="stats-container">
+            <div class="stats-group">
+                <h3>🏆 Resumen de Clientes por TOP y Estado de Envío</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>TOP</th><th>TOTAL CLIENTES</th><th>ENVIADOS</th><th>CONFIRMADOS</th>
+                        </tr>
+                    </thead>
+                    <tbody id="stats-top-table-body"></tbody>
+                </table>
+            </div>
+            
+            <div class="stats-group">
+                <h3>🎒 Estado de Inventario y Consumo Total</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>OBSEQUIO</th><th>STOCK (ACTUAL/INICIAL)</th><th>CONSUMO TOTAL</th>
+                        </tr>
+                    </thead>
+                    <tbody id="stats-inventory-table-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>
