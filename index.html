@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CONTROL DE OBSEQUIOS GRUPO RECALFRENO</title>
     
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
         import { getDatabase, ref, onValue, update } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js";
@@ -111,7 +113,8 @@
 
             filteredData.forEach(([key, client]) => {
                 const row = tbody.insertRow();
-                row.className = statusFilter === 'ENVIADO' ? 'estado-enviado' : 'estado-confirmado';
+                // Clases simplificadas para el hover Odoo
+                row.className = 'odoo-row';
 
                 const tipoEnvioFull = (client.TIPO_ENVIO || '').toUpperCase();
                 const tipoEnvio = tipoEnvioFull ? `ENVIADO A ${tipoEnvioFull}` : '';
@@ -120,8 +123,7 @@
                 const top = client.TOP || 'N/A';
 
                 if (statusFilter === 'ENVIADO') {
-                    row.insertCell().appendChild(createButton('CONFIRMAR ENVIO', '#89CFF0', () => registerConfirmation(key)));
-                    
+                    row.insertCell().appendChild(createButton('CONFIRMAR ENVIO', 'btn-primary', () => registerConfirmation(key)));
                     row.insertCell().textContent = top;
                     row.insertCell().textContent = client.RUC_VAT || 'N/A';
                     row.insertCell().textContent = client.CLIENTE || 'N/A';
@@ -129,9 +131,7 @@
                     row.insertCell().textContent = tipoEnvio;
                     row.insertCell().textContent = vendedores;
                     row.insertCell().textContent = client.FECHA_ENVIO || '';
-                    
-                    row.insertCell().appendChild(createButton('ELIMINAR', '#ffcccc', () => revertStatus(key, 'ENVIADO', giftsStr, top)));
-                
+                    row.insertCell().appendChild(createButton('ELIMINAR', 'btn-danger', () => revertStatus(key, 'ENVIADO', giftsStr, top)));
                 } else if (statusFilter === 'CONFIRMADO') {
                     row.insertCell().textContent = '✅'; 
                     row.insertCell().textContent = top;
@@ -140,13 +140,12 @@
                     row.insertCell().textContent = tipoEnvio;
                     row.insertCell().textContent = vendedores;
                     row.insertCell().textContent = client.FECHA_CONFIRMACION || '';
-                    
-                    row.insertCell().appendChild(createButton('ELIMINAR', '#ffcccc', () => revertStatus(key, 'CONFIRMADO', giftsStr, top)));
+                    row.insertCell().appendChild(createButton('ELIMINAR', 'btn-danger', () => revertStatus(key, 'CONFIRMADO', giftsStr, top)));
                 }
             });
             
             if (filteredData.length === 0) {
-                 tbody.innerHTML = `<tr><td colspan="${statusFilter === 'ENVIADO' ? 9 : 8}" style="text-align: center;">No hay clientes en estado ${statusFilter}.</td></tr>`;
+                 tbody.innerHTML = `<tr><td colspan="${statusFilter === 'ENVIADO' ? 9 : 8}" style="text-align: center; padding: 20px; color: #666;">No hay clientes en estado ${statusFilter}.</td></tr>`;
             }
         };
 
@@ -155,7 +154,6 @@
             const searchInput = document.getElementById('search-input');
             
             const currentFilter = (filterText || searchInput.value).toUpperCase(); 
-            
             tbody.innerHTML = '';
             
             let filteredData = Object.entries(firebaseClients)
@@ -176,23 +174,20 @@
             
             filteredData.forEach(([key, client]) => {
                 const row = tbody.insertRow();
+                row.className = 'odoo-row';
                 const status = (client.ESTADO_ENVIO || 'PENDIENTE').toUpperCase(); 
                 
-                let statusText = '';
-                let bgColor = '';
+                let statusClass = 'badge-pending';
+                let statusText = 'PENDIENTE';
                 let tipoEnvio = '';
-                
                 const tipoEnvioFull = (client.TIPO_ENVIO || '').toUpperCase(); 
                 
                 if (status === 'CONFIRMADO') {
                     statusText = 'CONFIRMADO';
-                    bgColor = '#3CB371';
+                    statusClass = 'badge-success';
                 } else if (status === 'ENVIADO') {
                     statusText = 'ENVIADO';
-                    bgColor = '#5F9EA0';
-                } else {
-                     statusText = 'PENDIENTE';
-                     bgColor = ''; 
+                    statusClass = 'badge-info';
                 }
                 
                 if (['ENVIADO', 'CONFIRMADO'].includes(status) && tipoEnvioFull) {
@@ -203,39 +198,32 @@
                 const giftsStr = client.OBSEQUIOS_ENVIADOS || 'N/A';
                 const vendedores = `${client["VENDEDOR 1"] || 'N/A'} / ${client["VENDEDOR 2"] || 'N/A'}`;
                 
-                row.insertCell().appendChild(createButton('REGISTRAR ENVIO', '#ADD8E6', () => registerShipment(key, top, 'CLIENTE')));
+                row.insertCell().appendChild(createButton('REGISTRAR ENVIO', 'btn-secondary', () => registerShipment(key, top, 'CLIENTE')));
+                row.insertCell().appendChild(createButton('ENVIAR A VENDEDOR', 'btn-warning', () => registerShipment(key, top, 'VENDEDOR')));
                 
-                row.insertCell().appendChild(createButton('ENVIAR A VENDEDOR', '#FFFF99', () => registerShipment(key, top, 'VENDEDOR')));
-                
-                row.insertCell().appendChild(createCellItem(statusText, bgColor));
+                const badgeCell = row.insertCell();
+                const badge = document.createElement('span');
+                badge.className = `status-badge ${statusClass}`;
+                badge.textContent = statusText;
+                badgeCell.appendChild(badge);
                 
                 row.insertCell().textContent = top;
-                
                 row.insertCell().textContent = client.CLIENTE || 'N/A';
-                
                 row.insertCell().textContent = giftsStr;
-                
                 row.insertCell().textContent = tipoEnvio;
-                
                 row.insertCell().textContent = vendedores;
+                row.insertCell().appendChild(createButton('EDITAR', 'btn-edit', () => openEditDialog(key)));
 
-                row.insertCell().appendChild(createButton('EDITAR', '#CCCCFF', () => openEditDialog(key)));
-
-                if (bgColor && status !== 'PENDIENTE') {
-                    Array.from(row.cells).forEach(cell => {
-                        if (!cell.querySelector('button')) { 
-                           cell.style.backgroundColor = bgColor;
-                        }
-                    });
-                }
+                // Sutil resaltado de fila según estado
+                if (status === 'CONFIRMADO') row.style.backgroundColor = '#f4fbf7';
+                else if (status === 'ENVIADO') row.style.backgroundColor = '#f0f8ff';
             });
         };
 
-        const createButton = (text, color, onClick) => {
+        const createButton = (text, cssClass, onClick) => {
             const button = document.createElement('button');
             button.textContent = text;
-            button.className = 'table-button';
-            button.style.backgroundColor = color;
+            button.className = `table-button ${cssClass}`;
             button.onclick = (e) => {
                 e.stopPropagation();
                 onClick();
@@ -243,15 +231,21 @@
             return button;
         };
 
-        const createCellItem = (text, color) => {
+        const createCellItem = (text, bgColor) => {
             const div = document.createElement('div');
             div.textContent = text;
-            div.style.backgroundColor = color || 'transparent';
-            div.style.padding = '5px 10px';
-            div.style.borderRadius = '3px';
+            if(bgColor) {
+                div.style.backgroundColor = bgColor;
+                div.style.color = 'white';
+            } else {
+                div.style.backgroundColor = '#f1f1f1';
+                div.style.color = '#333';
+            }
+            div.style.padding = '4px 8px';
+            div.style.borderRadius = '4px';
             div.style.textAlign = 'center';
-            div.style.fontWeight = 'bold';
-            div.style.color = color ? 'white' : 'black'; 
+            div.style.fontWeight = '600';
+            div.style.fontSize = '12px';
             return div;
         };
         
@@ -376,7 +370,6 @@
         };
 
         // --- FUNCIONES DE EXPORTACIÓN A XLSX ---
-
         const exportAllToXLSX = () => {
             if (Object.keys(firebaseClients).length === 0) {
                 alert("No hay datos de clientes para exportar.");
@@ -413,38 +406,35 @@
             alert(`Datos exportados exitosamente como ${defaultName}`);
         };
 
-
         // --- RENDERING DE ESTADÍSTICAS Y CONTADORES ---
-        
         const updateInventoryDisplay = () => {
             const container = document.getElementById('inventory-container');
             container.innerHTML = '';
-            const colors = ["#FFCDD2", "#C8E6C9", "#BBDEFB", "#FFF9C4", "#D1C4E9", "#B2DFDB", "#FFCCBC"];
             const iconMap = {
                 "ESFERO": "✍️", "MOCHILA": "🎒", "FRANELA": "👕", "REGALO": "🎁", 
                 "GORRA": "🧢", "MANDIL": "🎽", "CAMISETA": "👕"
             };
-            let colorIdx = 0;
 
             Object.entries(inventory).forEach(([gift, data]) => {
                 const initial = data.INICIAL || 0;
                 const current = data.ACTUAL || 0;
-                let colorBg = colors[colorIdx % colors.length];
+                let statusClass = 'inv-normal';
 
-                if (current <= 10) colorBg = "#FF9999"; 
-                else if (initial > 0 && current <= (initial * 0.1)) colorBg = "#FFCC99";
+                if (current <= 10) statusClass = "inv-danger"; 
+                else if (initial > 0 && current <= (initial * 0.1)) statusClass = "inv-warning";
  
                 const frame = document.createElement('div');
-                frame.className = 'inventory-frame';
-                frame.style.backgroundColor = colorBg;
+                frame.className = `inventory-card ${statusClass}`;
 
                 const icon = iconMap[gift.toUpperCase()] || "🎁";
                 frame.innerHTML = `
-                    <div class="inventory-name"><b>${icon} ${gift.toUpperCase()}</b></div>
-                    <div class="inventory-count" style="color: ${current <= 10 ? 'darkred' : 'black'};">${current}/${initial}</div>
+                    <div class="inv-icon">${icon}</div>
+                    <div class="inv-details">
+                        <div class="inv-name">${gift.toUpperCase()}</div>
+                        <div class="inv-count">${current} <span class="inv-total">/ ${initial}</span></div>
+                    </div>
                 `;
                 container.appendChild(frame);
-                colorIdx++;
             });
         };
 
@@ -479,15 +469,12 @@
             const topTable = document.getElementById('stats-top-table-body');
             topTable.innerHTML = '';
             
-            const TOP_COLORS = {"CONFIRMADO": "#3CB371", "ENVIADO": "#5F9EA0", "PENDIENTE": "#F0E68C"};
-
             Object.entries(topStats).forEach(([top, data]) => {
                 const row = topTable.insertRow();
                 row.insertCell().textContent = top;
                 row.insertCell().textContent = data.TOTAL;
-
-                row.insertCell().appendChild(createCellItem(data.ENVIADO, TOP_COLORS.ENVIADO));
-                row.insertCell().appendChild(createCellItem(data.CONFIRMADO, TOP_COLORS.CONFIRMADO));
+                row.insertCell().appendChild(createCellItem(data.ENVIADO, '#17a2b8'));
+                row.insertCell().appendChild(createCellItem(data.CONFIRMADO, '#28a745'));
             });
             
             const invTable = document.getElementById('stats-inventory-table-body');
@@ -498,20 +485,18 @@
                 const current = data.ACTUAL || 0;
                 const consumed = initial - current;
                 
-                let color = "";
-                if (current <= 10) color = "#FF9999"; 
-                else if (initial > 0 && current <= (initial * 0.1)) color = "#FFCC99";
+                let color = "#6c757d";
+                if (current <= 10) color = "#dc3545"; 
+                else if (initial > 0 && current <= (initial * 0.1)) color = "#fd7e14";
 
                 const row = invTable.insertRow();
                 row.insertCell().textContent = gift.toUpperCase();
-                
                 row.insertCell().appendChild(createCellItem(`${current} / ${initial}`, color));
-                row.insertCell().appendChild(createCellItem(`${consumed} unidades`, "#ADD8E6"));
+                row.insertCell().appendChild(createCellItem(`${consumed} und.`, "#714B67"));
             });
         };
 
         // --- CONFIGURACIÓN DE PESTAÑAS (TABS) ---
-
         const setupTabs = () => {
             const tabsContainer = document.getElementById('tabs-container');
             const tabContents = document.querySelectorAll('.tab-content');
@@ -540,222 +525,271 @@
             loadFirebaseData();
             setupTabs();
             document.getElementById('search-input').addEventListener('input', (e) => renderManualTable(e.target.value));
-            // Event listener para el botón de exportar reubicado
             document.getElementById('export-clients-btn').addEventListener('click', exportAllToXLSX);
         });
     </script>
 
     <style>
-        /* Estilos Base */
-        body { font-family: 'Inter', Arial, sans-serif; margin: 0; padding: 20px; background-color: #f4f4f9; color: #333; }
-        h1 { color: #1a237e; border-bottom: 3px solid #b3e5fc; padding-bottom: 10px; margin-bottom: 20px; }
+        /* --- ESTILOS ODOO ENTERPRISE --- */
+        :root {
+            --odoo-primary: #714B67; /* Morado corporativo Odoo */
+            --odoo-secondary: #017e84; /* Teal Odoo */
+            --bg-color: #f0f2f5;
+            --card-bg: #ffffff;
+            --text-main: #4c4c4c;
+            --border-color: #dee2e6;
+            --hover-bg: #f8f9fa;
+        }
+
+        body { 
+            font-family: 'Inter', sans-serif; 
+            margin: 0; 
+            padding: 20px; 
+            background-color: var(--bg-color); 
+            color: var(--text-main); 
+            line-height: 1.5;
+        }
+
+        .container {
+            max-width: 1300px;
+            margin: auto;
+            background: var(--card-bg);
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.03);
+        }
+
+        h1 { 
+            color: var(--odoo-primary); 
+            font-size: 28px; 
+            font-weight: 700; 
+            margin-top: 0;
+            margin-bottom: 25px;
+            border-bottom: 2px solid var(--odoo-primary); 
+            display: inline-block;
+            padding-bottom: 5px;
+        }
+
+        h2 {
+            font-size: 18px;
+            color: #555;
+            font-weight: 500;
+            margin-top: 0;
+            margin-bottom: 15px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            font-weight: bold;
+            color: var(--odoo-secondary);
+        }
         
-        /* Contenedor principal de Inventario y Botón de Exportación */
+        /* Contenedor principal de Inventario y Botón */
         #inventory-and-export-container {
             display: flex;
             justify-content: space-between;
-            align-items: center;
-            flex-wrap: wrap; /* Permite que los elementos se envuelvan en pantallas pequeñas */
-            margin-bottom: 20px;
+            align-items: flex-start;
+            flex-wrap: wrap;
+            margin-bottom: 30px;
+            gap: 20px;
         }
 
-        /* Contenedor de Inventario */
+        /* Tarjetas de Inventario (Estilo Kanban) */
         #inventory-container { 
             display: flex; 
-            gap: 10px; 
+            gap: 12px; 
             flex-wrap: wrap;
             margin-top: 10px;
-            flex-grow: 1; /* Permite que ocupe el espacio disponible */
         }
-        .inventory-frame { 
-            padding: 8px 15px; 
-            border-radius: 8px; 
-            border: 1px solid #999; 
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            min-width: 120px;
-            text-align: center;
+        
+        .inventory-card { 
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 15px; 
+            border-radius: 6px; 
+            background: #fff;
+            border: 1px solid var(--border-color); 
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            min-width: 140px;
         }
 
-        /* Contenedor del botón de exportar (ubicación final) */
-        .export-btn-container {
-            margin-top: 10px;
-            margin-left: 20px;
-            padding: 0;
-            flex-shrink: 0; /* Evita que el botón se comprima */
-        }
+        .inventory-card.inv-danger { border-left: 4px solid #dc3545; background-color: #fff5f5; }
+        .inventory-card.inv-warning { border-left: 4px solid #fd7e14; background-color: #fff9f5; }
+        .inventory-card.inv-normal { border-left: 4px solid var(--odoo-secondary); }
+
+        .inv-icon { font-size: 24px; }
+        .inv-details { display: flex; flex-direction: column; }
+        .inv-name { font-size: 11px; font-weight: 600; color: #666; letter-spacing: 0.5px; }
+        .inv-count { font-size: 18px; font-weight: 700; color: #212529; }
+        .inv-total { font-size: 13px; color: #888; font-weight: 400; }
+
+        /* Botón de Exportar */
         .export-btn {
             padding: 10px 20px;
-            background-color: #2e7d32; 
+            background-color: var(--odoo-primary); 
             color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-weight: bold;
-            transition: background-color 0.3s;
-        }
-        .export-btn:hover {
-            background-color: #388e3c;
-        }
-
-
-        /* Estilos de Pestañas */
-        #tabs-container { display: flex; gap: 5px; border-bottom: 2px solid #ccc; margin-bottom: 10px; overflow-x: auto; }
-        .tab-button {
-            padding: 10px 20px;
-            border: none;
-            cursor: pointer;
-            font-weight: bold;
-            background-color: #e0e0e0;
-            border-top-left-radius: 8px;
-            border-top-right-radius: 8px;
-            transition: background-color 0.3s;
-            flex-shrink: 0; 
-        }
-        .tab-button.active { background-color: #ADD8E6; border-bottom: 2px solid #ADD8E6; color: #1a237e; }
-        .tab-content { display: none; padding: 15px 0; }
-        .tab-content.active { display: block; }
-        
-        /* Estilos de Tabla */
-        .table-container { overflow-x: auto; } 
-        table { width: 100%; min-width: 800px; border-collapse: collapse; margin-top: 10px; background-color: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-        
-        /* AJUSTE: Reducir padding de celda y mantener nowrap */
-        th, td { padding: 6px 8px; border: 1px solid #e0e0e0; text-align: center; white-space: nowrap; }
-        th { background-color: #4db6ac; color: white; font-weight: bold; text-transform: uppercase; }
-        
-        /* --- AJUSTES DE TAMAÑO DE COLUMNA Y TEXTO --- */
-        
-        /* Columna CLIENTE (4ta en Enviados, 3ra en Confirmados, 5ta en Manuales) */
-        #obsequios-enviados table td:nth-child(4),
-        #envios-confirmados table td:nth-child(3),
-        #envios-manuales table td:nth-child(5) {
-            max-width: 200px; 
-            overflow: hidden; 
-            text-overflow: ellipsis; 
-            white-space: nowrap; 
-            text-align: left; 
-        }
-
-        /* Columna RUC (3ra en Enviados) */
-        #obsequios-enviados table td:nth-child(3) {
-            max-width: 100px; 
-            overflow: hidden; 
-            text-overflow: ellipsis; 
-            white-space: nowrap; 
-        }
-        
-        /* Estilos de Botones en Tabla */
-        .table-button {
-            padding: 5px 8px; 
-            font-size: 0.9em; 
             border: none;
             border-radius: 4px;
             cursor: pointer;
-            font-weight: bold;
-            color: black;
-            transition: opacity 0.3s;
-            width: 100%;
+            font-weight: 600;
+            font-size: 13px;
+            text-transform: uppercase;
+            transition: opacity 0.2s;
+            box-shadow: 0 2px 4px rgba(113, 75, 103, 0.2);
         }
+        .export-btn:hover { opacity: 0.9; }
 
-        /* Colores de estado (filas) */
-        .estado-enviado { background-color: #e3f2fd; } 
-        .estado-confirmado { background-color: #e8f5e9; } 
-
-        /* Estilos para la tabla manual */
-        .search-bar { display: flex; gap: 10px; margin-bottom: 15px; align-items: center; }
-        .search-bar input { padding: 8px; width: 300px; border: 1px solid #ccc; border-radius: 4px; }
+        /* Pestañas (Tabs Odoo Style) */
+        #tabs-container { 
+            display: flex; 
+            border-bottom: 1px solid var(--border-color); 
+            margin-bottom: 25px; 
+            overflow-x: auto; 
+        }
+        .tab-button {
+            padding: 12px 20px;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 14px;
+            color: #666;
+            transition: all 0.2s;
+            border-bottom: 2px solid transparent;
+            white-space: nowrap;
+        }
+        .tab-button:hover { color: var(--odoo-secondary); }
+        .tab-button.active { 
+            color: var(--odoo-secondary); 
+            border-bottom: 2px solid var(--odoo-secondary); 
+            font-weight: 600;
+        }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; animation: fadeIn 0.3s ease; }
         
-        /* --- AJUSTE: Tablas de Estadísticas Compactas y Separadas --- */
-        #estadisticas .stats-container {
-            display: flex;
-            gap: 30px; /* Aumentar separación horizontal */
-            flex-wrap: wrap;
-        }
-        #estadisticas .stats-group {
-            flex: 1; 
-            min-width: 300px;
-            margin-bottom: 20px;
-        }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
-        #estadisticas table {
-            width: 100%;
-            min-width: 0; 
+        /* Buscador Odoo Style */
+        .search-bar { display: flex; gap: 10px; margin-bottom: 20px; align-items: center; }
+        .search-bar label { font-size: 13px; font-weight: 600; color: #555; }
+        .search-bar input { 
+            padding: 10px 15px; 
+            width: 350px; 
+            border: 1px solid var(--border-color); 
+            border-radius: 4px; 
+            font-size: 14px;
+            background-color: #fff;
+            transition: border-color 0.2s;
         }
-        #estadisticas th, #estadisticas td {
-            padding: 4px 6px; 
+        .search-bar input:focus { outline: none; border-color: var(--odoo-secondary); box-shadow: 0 0 0 2px rgba(1,126,132,0.1); }
+        
+        /* Tablas Odoo Style */
+        .table-container { overflow-x: auto; border: 1px solid var(--border-color); border-radius: 6px; } 
+        table { width: 100%; border-collapse: collapse; background-color: white; font-size: 13px; }
+        
+        th, td { padding: 12px 10px; border-bottom: 1px solid var(--border-color); text-align: left; }
+        th { 
+            background-color: #f8f9fa; 
+            color: #495057; 
+            font-weight: 600; 
+            text-transform: uppercase; 
+            font-size: 11px;
+            letter-spacing: 0.5px;
         }
+        
+        .odoo-row:hover { background-color: var(--hover-bg); }
 
-        /* OPTIMIZACIÓN MÓVIL */
+        /* Ajustes de columnas para que no se estiren al infinito */
+        td:nth-child(4), td:nth-child(3) { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        
+        /* Badges de Estado */
+        .status-badge {
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            display: inline-block;
+        }
+        .badge-pending { background-color: #f1f3f5; color: #495057; }
+        .badge-success { background-color: #d4edda; color: #155724; }
+        .badge-info { background-color: #d1ecf1; color: #0c5460; }
+
+        /* Botones de Acción en Tabla */
+        .table-button {
+            padding: 6px 10px; 
+            font-size: 11px; 
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-weight: 600;
+            color: white;
+            transition: opacity 0.2s;
+            white-space: nowrap;
+            text-transform: uppercase;
+        }
+        .table-button:hover { opacity: 0.85; }
+        
+        .btn-primary { background-color: var(--odoo-secondary); }
+        .btn-secondary { background-color: #6c757d; }
+        .btn-warning { background-color: #f0ad4e; color: #fff; }
+        .btn-danger { background-color: #dc3545; }
+        .btn-edit { background-color: var(--odoo-primary); }
+
+        /* Estadísticas */
+        #estadisticas .stats-container { display: flex; gap: 30px; flex-wrap: wrap; }
+        #estadisticas .stats-group { flex: 1; min-width: 300px; margin-bottom: 20px; background: #fff; border: 1px solid #eee; border-radius: 6px; padding: 20px; }
+        #estadisticas h3 { color: var(--odoo-primary); font-size: 15px; margin-top: 0; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px;}
+        #estadisticas table { border: none; }
+        #estadisticas th { background: transparent; border-bottom: 2px solid #eee; }
+        #estadisticas td { border-bottom: 1px solid #f1f1f1; }
+
+        /* Móvil */
         @media (max-width: 768px) {
-            body { padding: 10px; }
-            h1 { font-size: 1.5em; }
-            
-            #inventory-and-export-container {
-                flex-direction: column;
-                align-items: stretch;
-            }
-            .export-btn-container {
-                margin-left: 0;
-                margin-top: 15px;
-                text-align: center;
-                width: 100%;
-            }
-
-            .inventory-frame { padding: 5px 10px; min-width: 100px; }
-            
-            table { font-size: 0.75em; } 
-            th, td { padding: 4px 6px; } 
-
+            .container { padding: 15px; }
+            h1 { font-size: 22px; }
+            #inventory-and-export-container { flex-direction: column; align-items: stretch; }
+            .inventory-card { min-width: 100px; padding: 10px; }
             .search-bar { flex-direction: column; align-items: flex-start; }
-            .search-bar input { width: 100%; margin-top: 5px; }
-            
-            .table-button { font-size: 0.8em; padding: 3px 6px; }
-            
-            /* Ajuste de estadísticas en móvil */
-            #estadisticas .stats-container {
-                flex-direction: column;
-                gap: 0;
-            }
-            #estadisticas .stats-group {
-                min-width: 100%;
-            }
+            .search-bar input { width: 100%; }
         }
     </style>
 </head>
 <body>
 
+<div class="container">
     <h1>CONTROL DE OBSEQUIOS GRUPO RECALFRENO</h1>
     
-    <div id="loading" class="loading">Cargando datos de Firebase...</div>
+    <div id="loading" class="loading">Sincronizando con base de datos...</div>
     
     <div id="inventory-and-export-container">
-        <div>
-            <h2>🎒 Inventario Actual</h2>
+        <div style="flex-grow: 1;">
+            <h2>Inventario en Tiempo Real</h2>
             <div id="inventory-container">
                 </div>
         </div>
         
         <div class="export-btn-container">
             <button id="export-clients-btn" class="export-btn">
-                Exportar Todos los Datos a Excel (XLSX) 💾
+                Exportar Reporte (XLSX)
             </button>
         </div>
     </div>
     
     <div id="tabs-container">
         <button class="tab-button" data-target="obsequios-enviados">📦 OBSEQUIOS ENVIADOS</button>
-        <button class="tab-button" data-target="envios-confirmados">✅ ENVIOS CONFIRMADOS</button>
-        <button class="tab-button" data-target="envios-manuales">🔍 ENVIOS MANUALES</button>
+        <button class="tab-button" data-target="envios-confirmados">✅ ENVÍOS CONFIRMADOS</button>
+        <button class="tab-button" data-target="envios-manuales">🔍 CONTROL GENERAL</button>
         <button class="tab-button" data-target="estadisticas">📊 ESTADÍSTICAS</button>
     </div>
 
     <div class="tab-content" id="obsequios-enviados">
-        <h2>Obsequios Enviados (Status: ENVIADO)</h2>
         <div class="table-container">
             <table>
                 <thead>
                     <tr>
-                        <th>ACCIÓN</th><th>TOP</th><th>RUC</th><th>CLIENTE</th><th>OBSEQUIOS</th><th>TIPO DE ENVIO</th><th>VENDEDORES</th><th>FECHA ENVÍO</th><th>ELIMINAR</th>
+                        <th>Acción</th><th>TOP</th><th>RUC</th><th>Cliente</th><th>Obsequios</th><th>Tipo de Envío</th><th>Vendedores</th><th>Fecha Envío</th><th>Revertir</th>
                     </tr>
                 </thead>
                 <tbody id="sent-table-body"></tbody>
@@ -764,12 +798,11 @@
     </div>
 
     <div class="tab-content" id="envios-confirmados">
-        <h2>Envios Confirmados (Status: CONFIRMADO)</h2>
         <div class="table-container">
             <table>
                 <thead>
                     <tr>
-                        <th>ACCIÓN</th><th>TOP</th><th>CLIENTE</th><th>OBSEQUIOS</th><th>TIPO DE ENVIO</th><th>VENDEDORES</th><th>FECHA CONFI.</th><th>ELIMINAR</th>
+                        <th>Estado</th><th>TOP</th><th>Cliente</th><th>Obsequios</th><th>Tipo de Envío</th><th>Vendedores</th><th>Fecha Confirmación</th><th>Revertir</th>
                     </tr>
                 </thead>
                 <tbody id="confirmed-table-body"></tbody>
@@ -778,16 +811,15 @@
     </div>
 
     <div class="tab-content" id="envios-manuales">
-        <h2>Control de Clientes (TODOS)</h2>
         <div class="search-bar">
-            <label>BUSCAR CLIENTE (NOMBRE/RUC):</label>
-            <input type="text" id="search-input" placeholder="ESCRIBE PARA FILTRAR...">
+            <label>Buscar Cliente:</label>
+            <input type="text" id="search-input" placeholder="Escribe el nombre o RUC para filtrar...">
         </div>
         <div class="table-container">
             <table>
                 <thead>
                     <tr>
-                        <th>REGISTRAR ENVIO</th><th>ENVIAR A VENDEDOR</th><th>STATUS</th><th>TOP</th><th>CLIENTE</th><th>OBSEQUIOS</th><th>TIPO DE ENVIO</th><th>VENDEDORES</th><th>EDITAR</th>
+                        <th>Envío Cliente</th><th>Envío Vendedor</th><th>Status</th><th>TOP</th><th>Cliente</th><th>Obsequios</th><th>Tipo de Envío</th><th>Vendedores</th><th>Editar</th>
                     </tr>
                 </thead>
                 <tbody id="manual-table-body"></tbody>
@@ -796,15 +828,13 @@
     </div>
 
     <div class="tab-content" id="estadisticas">
-        <h2>📊 ESTADÍSTICAS Y REPORTES</h2>
-        
         <div class="stats-container">
             <div class="stats-group">
-                <h3>🏆 Resumen de Clientes por TOP y Estado de Envío</h3>
+                <h3>Resumen de Clientes por TOP</h3>
                 <table>
                     <thead>
                         <tr>
-                            <th>TOP</th><th>TOTAL CLIENTES</th><th>ENVIADOS</th><th>CONFIRMADOS</th>
+                            <th>Categoría</th><th>Total Clientes</th><th>Enviados</th><th>Confirmados</th>
                         </tr>
                     </thead>
                     <tbody id="stats-top-table-body"></tbody>
@@ -812,11 +842,11 @@
             </div>
             
             <div class="stats-group">
-                <h3>🎒 Estado de Inventario y Consumo Total</h3>
+                <h3>Consumo Total de Inventario</h3>
                 <table>
                     <thead>
                         <tr>
-                            <th>OBSEQUIO</th><th>STOCK (ACTUAL/INICIAL)</th><th>CONSUMO TOTAL</th>
+                            <th>Obsequio</th><th>Stock (Actual / Inicial)</th><th>Consumo Real</th>
                         </tr>
                     </thead>
                     <tbody id="stats-inventory-table-body"></tbody>
@@ -824,6 +854,7 @@
             </div>
         </div>
     </div>
+</div>
 
 </body>
 </html>
