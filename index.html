@@ -1,860 +1,106 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CONTROL DE OBSEQUIOS GRUPO RECALFRENO</title>
-    
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
-        import { getDatabase, ref, onValue, update } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js";
-        
-        // --- Importación de la librería SheetJS para la exportación a XLSX ---
-        import * as XLSX from 'https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs'; 
-
-        // --- 1. CONFIGURACIÓN DE FIREBASE ---
-        const firebaseConfig = {
-            apiKey: "AIzaSyBYSt2BsM0J7XQ1NlN91O3MN61K2c_Ps2U", 
-            authDomain: "controlmercaderia.firebaseapp.com",
-            databaseURL: "https://controlmercaderia-default-rtdb.firebaseio.com",
-            projectId: "controlmercaderia",
-            storageBucket: "controlmercaderia.firebasestorage.app",
-            messagingSenderId: "561756099812",
-            appId: "1:561756099812:web:6d7b7eedfe2ce7b6d188f1",
-            measurementId: "G-JEYBE69XG7"
-        };
-
-        // Inicializar Firebase
-        const app = initializeApp(firebaseConfig);
-        const db = getDatabase(app);
-        
-        let firebaseClients = {};
-        let inventory = {};
-
-        const getEcuadorTime = () => {
-            return new Date().toLocaleString("es-EC", {
-                timeZone: 'America/Guayaquil',
-                day: '2-digit', month: '2-digit', year: 'numeric',
-                hour: '2-digit', minute: '2-digit', second: '2-digit',
-                hour12: false
-            }).replace(',', ' –');
-        };
-
-        const getGiftsForTop = (topCategory) => {
-            const gifts = {
-                "TOP 1": "ESFERO, MOCHILA, FRANELA, REGALO",
-                "TOP 2": "ESFERO, MOCHILA, FRANELA, GORRA, MANDIL",
-                "TOP 3": "ESFERO, MOCHILA, FRANELA, GORRA, CAMISETA",
-                "TOP 4": "ESFERO, MOCHILA, FRANELA, CAMISETA",
-                "TOP 5": "ESFERO, MOCHILA, FRANELA, GORRA",
-                "TOP 6": "ESFERO, MOCHILA, FRANELA"
-            };
-            return gifts[topCategory.toUpperCase()] || "NINGUNO";
-        };
-
-        const parseDateString = (dateStr) => {
-            if (!dateStr) return new Date(0);
-            const parts = dateStr.split(/[\/\–\s:]+/);
-            if (parts.length >= 6) {
-                const [d, m, y, h, min, s] = parts;
-                return new Date(y, m - 1, d, h, min, s);
-            }
-            return new Date(dateStr);
-        };
-
-        const loadFirebaseData = () => {
-            onValue(ref(db, 'clientes'), (snapshot) => {
-                firebaseClients = snapshot.val() || {};
-                console.log("Clientes cargados/actualizados.");
-                updateAllViews();
-            }, (error) => {
-                console.error("Error al cargar clientes:", error);
-                document.getElementById('loading').textContent = 'Error al cargar clientes.';
-            });
-
-            onValue(ref(db, 'inventario_obsequios'), (snapshot) => {
-                inventory = snapshot.val() || {};
-                console.log("Inventario cargado/actualizado.");
-                updateInventoryDisplay();
-                if (Object.keys(firebaseClients).length > 0) {
-                   updateStatsTables();
-                }
-            }, (error) => {
-                console.error("Error al cargar inventario:", error);
-            });
-
-            document.getElementById('loading').style.display = 'none';
-        };
-
-        const updateAllViews = () => {
-            renderTable('sent-table-body', 'ENVIADO');
-            renderTable('confirmed-table-body', 'CONFIRMADO');
-            renderManualTable();
-            updateStatsTables();
-            const activeTab = document.querySelector('.tab-button.active');
-            if (activeTab) {
-                 activeTab.dispatchEvent(new Event('click')); 
-            }
-        };
-
-        const renderTable = (tbodyId, statusFilter) => {
-            const tbody = document.getElementById(tbodyId);
-            tbody.innerHTML = '';
-            
-            let filteredData = Object.entries(firebaseClients)
-                .filter(([key, client]) => (client.ESTADO_ENVIO || '').toUpperCase() === statusFilter);
-
-            const dateField = statusFilter === 'ENVIADO' ? 'FECHA_ENVIO' : 'FECHA_CONFIRMACION';
-            filteredData.sort(([, a], [, b]) => 
-                parseDateString(b[dateField]).getTime() - parseDateString(a[dateField]).getTime()
-            );
-
-            filteredData.forEach(([key, client]) => {
-                const row = tbody.insertRow();
-                // Clases simplificadas para el hover Odoo
-                row.className = 'odoo-row';
-
-                const tipoEnvioFull = (client.TIPO_ENVIO || '').toUpperCase();
-                const tipoEnvio = tipoEnvioFull ? `ENVIADO A ${tipoEnvioFull}` : '';
-                const vendedores = `${client["VENDEDOR 1"] || 'N/A'} / ${client["VENDEDOR 2"] || 'N/A'}`;
-                const giftsStr = client.OBSEQUIOS_ENVIADOS || 'NINGUNO';
-                const top = client.TOP || 'N/A';
-
-                if (statusFilter === 'ENVIADO') {
-                    row.insertCell().appendChild(createButton('CONFIRMAR ENVIO', 'btn-primary', () => registerConfirmation(key)));
-                    row.insertCell().textContent = top;
-                    row.insertCell().textContent = client.RUC_VAT || 'N/A';
-                    row.insertCell().textContent = client.CLIENTE || 'N/A';
-                    row.insertCell().textContent = giftsStr;
-                    row.insertCell().textContent = tipoEnvio;
-                    row.insertCell().textContent = vendedores;
-                    row.insertCell().textContent = client.FECHA_ENVIO || '';
-                    row.insertCell().appendChild(createButton('ELIMINAR', 'btn-danger', () => revertStatus(key, 'ENVIADO', giftsStr, top)));
-                } else if (statusFilter === 'CONFIRMADO') {
-                    row.insertCell().textContent = '✅'; 
-                    row.insertCell().textContent = top;
-                    row.insertCell().textContent = client.CLIENTE || 'N/A';
-                    row.insertCell().textContent = giftsStr;
-                    row.insertCell().textContent = tipoEnvio;
-                    row.insertCell().textContent = vendedores;
-                    row.insertCell().textContent = client.FECHA_CONFIRMACION || '';
-                    row.insertCell().appendChild(createButton('ELIMINAR', 'btn-danger', () => revertStatus(key, 'CONFIRMADO', giftsStr, top)));
-                }
-            });
-            
-            if (filteredData.length === 0) {
-                 tbody.innerHTML = `<tr><td colspan="${statusFilter === 'ENVIADO' ? 9 : 8}" style="text-align: center; padding: 20px; color: #666;">No hay clientes en estado ${statusFilter}.</td></tr>`;
-            }
-        };
-
-        const renderManualTable = (filterText = '') => {
-            const tbody = document.getElementById('manual-table-body');
-            const searchInput = document.getElementById('search-input');
-            
-            const currentFilter = (filterText || searchInput.value).toUpperCase(); 
-            tbody.innerHTML = '';
-            
-            let filteredData = Object.entries(firebaseClients)
-                .filter(([key, client]) => {
-                    const clientName = (client.CLIENTE || '').toUpperCase();
-                    const rucVat = (client.RUC_VAT || '').toUpperCase();
-                    return clientName.includes(currentFilter) || rucVat.includes(currentFilter);
-                });
-
-            filteredData.sort(([, a], [, b]) => {
-                const topA = a.TOP || 'Z';
-                const topB = b.TOP || 'Z';
-                if (topA !== topB) return topA.localeCompare(topB);
-                const clientA = a.CLIENTE || 'Z';
-                const clientB = b.CLIENTE || 'Z';
-                return clientA.localeCompare(clientB);
-            });
-            
-            filteredData.forEach(([key, client]) => {
-                const row = tbody.insertRow();
-                row.className = 'odoo-row';
-                const status = (client.ESTADO_ENVIO || 'PENDIENTE').toUpperCase(); 
-                
-                let statusClass = 'badge-pending';
-                let statusText = 'PENDIENTE';
-                let tipoEnvio = '';
-                const tipoEnvioFull = (client.TIPO_ENVIO || '').toUpperCase(); 
-                
-                if (status === 'CONFIRMADO') {
-                    statusText = 'CONFIRMADO';
-                    statusClass = 'badge-success';
-                } else if (status === 'ENVIADO') {
-                    statusText = 'ENVIADO';
-                    statusClass = 'badge-info';
-                }
-                
-                if (['ENVIADO', 'CONFIRMADO'].includes(status) && tipoEnvioFull) {
-                    tipoEnvio = `ENVIADO A ${tipoEnvioFull}`;
-                }
-
-                const top = client.TOP || 'N/A';
-                const giftsStr = client.OBSEQUIOS_ENVIADOS || 'N/A';
-                const vendedores = `${client["VENDEDOR 1"] || 'N/A'} / ${client["VENDEDOR 2"] || 'N/A'}`;
-                
-                row.insertCell().appendChild(createButton('REGISTRAR ENVIO', 'btn-secondary', () => registerShipment(key, top, 'CLIENTE')));
-                row.insertCell().appendChild(createButton('ENVIAR A VENDEDOR', 'btn-warning', () => registerShipment(key, top, 'VENDEDOR')));
-                
-                const badgeCell = row.insertCell();
-                const badge = document.createElement('span');
-                badge.className = `status-badge ${statusClass}`;
-                badge.textContent = statusText;
-                badgeCell.appendChild(badge);
-                
-                row.insertCell().textContent = top;
-                row.insertCell().textContent = client.CLIENTE || 'N/A';
-                row.insertCell().textContent = giftsStr;
-                row.insertCell().textContent = tipoEnvio;
-                row.insertCell().textContent = vendedores;
-                row.insertCell().appendChild(createButton('EDITAR', 'btn-edit', () => openEditDialog(key)));
-
-                // Sutil resaltado de fila según estado
-                if (status === 'CONFIRMADO') row.style.backgroundColor = '#f4fbf7';
-                else if (status === 'ENVIADO') row.style.backgroundColor = '#f0f8ff';
-            });
-        };
-
-        const createButton = (text, cssClass, onClick) => {
-            const button = document.createElement('button');
-            button.textContent = text;
-            button.className = `table-button ${cssClass}`;
-            button.onclick = (e) => {
-                e.stopPropagation();
-                onClick();
-            };
-            return button;
-        };
-
-        const createCellItem = (text, bgColor) => {
-            const div = document.createElement('div');
-            div.textContent = text;
-            if(bgColor) {
-                div.style.backgroundColor = bgColor;
-                div.style.color = 'white';
-            } else {
-                div.style.backgroundColor = '#f1f1f1';
-                div.style.color = '#333';
-            }
-            div.style.padding = '4px 8px';
-            div.style.borderRadius = '4px';
-            div.style.textAlign = 'center';
-            div.style.fontWeight = '600';
-            div.style.fontSize = '12px';
-            return div;
-        };
-        
-        // --- FUNCIONES DE MANEJO DE ESTADOS (sin cambios) ---
-
-        const registerShipment = (key, top, shipmentType) => {
-            const client = firebaseClients[key];
-            if (client.ESTADO_ENVIO !== 'PENDIENTE' && client.ESTADO_ENVIO) {
-                alert(`Error: Este cliente ya tiene un envío en estado ${client.ESTADO_ENVIO}.`);
-                return;
-            }
-
-            const giftsStr = getGiftsForTop(top);
-            const gifts = giftsStr.split(',').map(g => g.trim()).filter(g => g && g !== 'NINGUNO');
-            const updates = {};
-            let canShip = true;
-
-            gifts.forEach(g => {
-                const invKey = Object.keys(inventory).find(k => k.toUpperCase() === g.toUpperCase());
-                if (invKey) {
-                    const current = inventory[invKey].ACTUAL || 0;
-                    if (current <= 0) {
-                        alert(`SIN STOCK: ${g}. No se puede registrar el envío.`);
-                        canShip = false;
-                    }
-                    updates[`inventario_obsequios/${invKey}/ACTUAL`] = current - 1;
-                }
-            });
-
-            if (!canShip) return;
-
-            updates[`clientes/${key}/ESTADO_ENVIO`] = "ENVIADO";
-            updates[`clientes/${key}/FECHA_ENVIO`] = getEcuadorTime();
-            updates[`clientes/${key}/TIPO_ENVIO`] = shipmentType.toUpperCase();
-            
-            if (!client.OBSEQUIOS_ENVIADOS) {
-                 updates[`clientes/${key}/OBSEQUIOS_ENVIADOS`] = giftsStr;
-            }
-
-            update(ref(db), updates)
-                .then(() => alert(`ENVÍO A ${shipmentType.toUpperCase()} REGISTRADO Y STOCK DESCONTADO.`))
-                .catch(error => alert(`ERROR al registrar envío: ${error.message}`));
-        };
-
-        const registerConfirmation = (key) => {
-             const updates = {};
-             updates[`clientes/${key}/ESTADO_ENVIO`] = "CONFIRMADO";
-             updates[`clientes/${key}/FECHA_CONFIRMACION`] = getEcuadorTime();
-             
-             update(ref(db), updates)
-                .then(() => alert('CONFIRMADO.'))
-                .catch(error => alert(`ERROR al confirmar: ${error.message}`));
-        };
-
-        const revertStatus = (key, currentStatus, giftsStr, top) => {
-            if (!confirm(`¿ESTÁS SEGURO DE ELIMINAR ESTE REGISTRO? Esto revertirá el estado y el stock (si aplica).`)) return;
-
-            const updates = {};
-            
-            if (currentStatus === "CONFIRMADO") {
-                updates[`clientes/${key}/ESTADO_ENVIO`] = "ENVIADO";
-                updates[`clientes/${key}/FECHA_CONFIRMACION`] = ""; 
-            } else if (currentStatus === "ENVIADO") {
-                updates[`clientes/${key}/ESTADO_ENVIO`] = "PENDIENTE";
-                updates[`clientes/${key}/FECHA_ENVIO`] = "";
-                updates[`clientes/${key}/TIPO_ENVIO`] = ""; 
-                
-                const gifts = giftsStr.split(',').map(g => g.trim()).filter(g => g && g !== 'NINGUNO');
-                gifts.forEach(g => {
-                    const invKey = Object.keys(inventory).find(k => k.toUpperCase() === g.toUpperCase());
-                    if (invKey) {
-                        const current = inventory[invKey].ACTUAL || 0;
-                        updates[`inventario_obsequios/${invKey}/ACTUAL`] = current + 1;
-                    }
-                });
-            }
-
-            update(ref(db), updates)
-                .then(() => alert('REGISTRO REVERTIDO Y STOCK AJUSTADO.'))
-                .catch(error => alert(`FALLO AL REVERTIR: ${error.message}`));
-        };
-
-        const openEditDialog = (key) => {
-            const client = firebaseClients[key];
-            if (!client) {
-                alert("No se encontraron datos del cliente.");
-                return;
-            }
-
-            const currentStatus = (client.ESTADO_ENVIO || '').toUpperCase();
-            
-            if (["ENVIADO", "CONFIRMADO"].includes(currentStatus)) {
-                alert("ALERTA: Únicamente se puede editar clientes que no han sido enviados (STATUS PENDIENTE).");
-                return;
-            }
-
-            const newClient = prompt("Nuevo Nombre/Cliente:", client.CLIENTE || '');
-            const newTop = prompt("Nuevo TOP (Ej: TOP 1):", client.TOP || '');
-            const newGifts = prompt("Nuevos Obsequios (Separados por coma):", client.OBSEQUIOS_ENVIADOS || '');
-            const newRuc = prompt("Nuevo RUC (RUC_VAT):", client.RUC_VAT || '');
-            const newV1 = prompt("Nuevo Vendedor 1:", client["VENDEDOR 1"] || '');
-            const newV2 = prompt("Nuevo Vendedor 2:", client["VENDEDOR 2"] || '');
-
-            if (newClient === null) return; 
-
-            saveManualEdit(key, newClient, newTop, newGifts, newRuc, newV1, newV2);
-        };
-
-        const saveManualEdit = (key, client, top, gifts, ruc, v1, v2) => {
-            const updates = {
-                "CLIENTE": client.toUpperCase().trim(),
-                "TOP": top.toUpperCase().trim(),
-                "OBSEQUIOS_ENVIADOS": gifts.toUpperCase().trim(),
-                "RUC_VAT": ruc.toUpperCase().trim(),
-                "VENDEDOR 1": v1.toUpperCase().trim(),
-                "VENDEDOR 2": v2.toUpperCase().trim(),
-            };
-
-            update(ref(db, `clientes/${key}`), updates)
-                .then(() => alert("Datos actualizados en Firebase."))
-                .catch(error => alert(`Error al guardar: ${error.message}`));
-        };
-
-        // --- FUNCIONES DE EXPORTACIÓN A XLSX ---
-        const exportAllToXLSX = () => {
-            if (Object.keys(firebaseClients).length === 0) {
-                alert("No hay datos de clientes para exportar.");
-                return;
-            }
-
-            const exportHeaders = [
-                'ID_FIREBASE', 'RUC_VAT', 'CLIENTE', 'TOP', 'ESTADO_ENVIO', 
-                'OBSEQUIOS_ENVIADOS', 'TIPO_ENVIO', 'VENDEDOR 1', 'VENDEDOR 2', 
-                'FECHA_ENVIO', 'FECHA_CONFIRMACION'
-            ];
-            
-            const exportData = Object.entries(firebaseClients).map(([key, client]) => ({
-                'ID_FIREBASE': key,
-                'RUC_VAT': client.RUC_VAT || 'N/A',
-                'CLIENTE': client.CLIENTE || 'N/A',
-                'TOP': client.TOP || 'N/A',
-                'ESTADO_ENVIO': client.ESTADO_ENVIO || 'PENDIENTE',
-                'OBSEQUIOS_ENVIADOS': client.OBSEQUIOS_ENVIADOS || 'N/A',
-                'TIPO_ENVIO': client.TIPO_ENVIO || 'N/A',
-                'VENDEDOR 1': client["VENDEDOR 1"] || 'N/A',
-                'VENDEDOR 2': client["VENDEDOR 2"] || 'N/A',
-                'FECHA_ENVIO': client.FECHA_ENVIO || '',
-                'FECHA_CONFIRMACION': client.FECHA_CONFIRMACION || ''
-            }));
-
-            const ws = XLSX.utils.json_to_sheet(exportData, { header: exportHeaders });
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, "Reporte Clientes");
-            
-            const defaultName = `Reporte_Obsequios_Clientes_${new Date().toLocaleDateString('es-EC').replace(/\//g, '')}.xlsx`;
-            
-            XLSX.writeFile(wb, defaultName);
-            alert(`Datos exportados exitosamente como ${defaultName}`);
-        };
-
-        // --- RENDERING DE ESTADÍSTICAS Y CONTADORES ---
-        const updateInventoryDisplay = () => {
-            const container = document.getElementById('inventory-container');
-            container.innerHTML = '';
-            const iconMap = {
-                "ESFERO": "✍️", "MOCHILA": "🎒", "FRANELA": "👕", "REGALO": "🎁", 
-                "GORRA": "🧢", "MANDIL": "🎽", "CAMISETA": "👕"
-            };
-
-            Object.entries(inventory).forEach(([gift, data]) => {
-                const initial = data.INICIAL || 0;
-                const current = data.ACTUAL || 0;
-                let statusClass = 'inv-normal';
-
-                if (current <= 10) statusClass = "inv-danger"; 
-                else if (initial > 0 && current <= (initial * 0.1)) statusClass = "inv-warning";
- 
-                const frame = document.createElement('div');
-                frame.className = `inventory-card ${statusClass}`;
-
-                const icon = iconMap[gift.toUpperCase()] || "🎁";
-                frame.innerHTML = `
-                    <div class="inv-icon">${icon}</div>
-                    <div class="inv-details">
-                        <div class="inv-name">${gift.toUpperCase()}</div>
-                        <div class="inv-count">${current} <span class="inv-total">/ ${initial}</span></div>
-                    </div>
-                `;
-                container.appendChild(frame);
-            });
-        };
-
-        const calculateTopStats = () => {
-            const stats = {
-                "TOP 1": {"TOTAL": 0, "ENVIADO": 0, "CONFIRMADO": 0, "PENDIENTE": 0},
-                "TOP 2": {"TOTAL": 0, "ENVIADO": 0, "CONFIRMADO": 0, "PENDIENTE": 0},
-                "TOP 3": {"TOTAL": 0, "ENVIADO": 0, "CONFIRMADO": 0, "PENDIENTE": 0},
-                "TOP 4": {"TOTAL": 0, "ENVIADO": 0, "CONFIRMADO": 0, "PENDIENTE": 0},
-                "TOP 5": {"TOTAL": 0, "ENVIADO": 0, "CONFIRMADO": 0, "PENDIENTE": 0},
-                "TOP 6": {"TOTAL": 0, "ENVIADO": 0, "CONFIRMADO": 0, "PENDIENTE": 0},
-            };
-            
-            Object.values(firebaseClients).forEach(val => {
-                const top = val.TOP || 'N/A';
-                const status = (val.ESTADO_ENVIO || 'PENDIENTE').toUpperCase();
-                
-                if (stats[top]) {
-                    stats[top]["TOTAL"] += 1;
-                    if (status in stats[top]) {
-                        stats[top][status] += 1;
-                    } else {
-                        stats[top]["PENDIENTE"] += 1;
-                    }
-                }
-            });
-            return stats;
-        };
-
-        const updateStatsTables = () => {
-            const topStats = calculateTopStats();
-            const topTable = document.getElementById('stats-top-table-body');
-            topTable.innerHTML = '';
-            
-            Object.entries(topStats).forEach(([top, data]) => {
-                const row = topTable.insertRow();
-                row.insertCell().textContent = top;
-                row.insertCell().textContent = data.TOTAL;
-                row.insertCell().appendChild(createCellItem(data.ENVIADO, '#17a2b8'));
-                row.insertCell().appendChild(createCellItem(data.CONFIRMADO, '#28a745'));
-            });
-            
-            const invTable = document.getElementById('stats-inventory-table-body');
-            invTable.innerHTML = '';
-            
-            Object.entries(inventory).forEach(([gift, data]) => {
-                const initial = data.INICIAL || 0;
-                const current = data.ACTUAL || 0;
-                const consumed = initial - current;
-                
-                let color = "#6c757d";
-                if (current <= 10) color = "#dc3545"; 
-                else if (initial > 0 && current <= (initial * 0.1)) color = "#fd7e14";
-
-                const row = invTable.insertRow();
-                row.insertCell().textContent = gift.toUpperCase();
-                row.insertCell().appendChild(createCellItem(`${current} / ${initial}`, color));
-                row.insertCell().appendChild(createCellItem(`${consumed} und.`, "#714B67"));
-            });
-        };
-
-        // --- CONFIGURACIÓN DE PESTAÑAS (TABS) ---
-        const setupTabs = () => {
-            const tabsContainer = document.getElementById('tabs-container');
-            const tabContents = document.querySelectorAll('.tab-content');
-            
-            tabsContainer.querySelectorAll('.tab-button').forEach(button => {
-                button.addEventListener('click', () => {
-                    const target = button.dataset.target;
-                    
-                    tabsContainer.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
-                    tabContents.forEach(content => content.classList.remove('active'));
-
-                    button.classList.add('active');
-                    document.getElementById(target).classList.add('active');
-                    
-                    if (target === 'obsequios-enviados') renderTable('sent-table-body', 'ENVIADO');
-                    if (target === 'envios-confirmados') renderTable('confirmed-table-body', 'CONFIRMADO');
-                    if (target === 'envios-manuales') renderManualTable();
-                    if (target === 'estadisticas') updateStatsTables();
-                });
-            });
-
-            document.querySelector('.tab-button').click();
-        };
-
-        window.addEventListener('load', () => {
-            loadFirebaseData();
-            setupTabs();
-            document.getElementById('search-input').addEventListener('input', (e) => renderManualTable(e.target.value));
-            document.getElementById('export-clients-btn').addEventListener('click', exportAllToXLSX);
-        });
-    </script>
-
-    <style>
-        /* --- ESTILOS ODOO ENTERPRISE --- */
-        :root {
-            --odoo-primary: #714B67; /* Morado corporativo Odoo */
-            --odoo-secondary: #017e84; /* Teal Odoo */
-            --bg-color: #f0f2f5;
-            --card-bg: #ffffff;
-            --text-main: #4c4c4c;
-            --border-color: #dee2e6;
-            --hover-bg: #f8f9fa;
-        }
-
-        body { 
-            font-family: 'Inter', sans-serif; 
-            margin: 0; 
-            padding: 20px; 
-            background-color: var(--bg-color); 
-            color: var(--text-main); 
-            line-height: 1.5;
-        }
-
-        .container {
-            max-width: 1300px;
-            margin: auto;
-            background: var(--card-bg);
-            padding: 30px;
-            border-radius: 8px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.03);
-        }
-
-        h1 { 
-            color: var(--odoo-primary); 
-            font-size: 28px; 
-            font-weight: 700; 
-            margin-top: 0;
-            margin-bottom: 25px;
-            border-bottom: 2px solid var(--odoo-primary); 
-            display: inline-block;
-            padding-bottom: 5px;
-        }
-
-        h2 {
-            font-size: 18px;
-            color: #555;
-            font-weight: 500;
-            margin-top: 0;
-            margin-bottom: 15px;
-        }
-
-        .loading {
-            text-align: center;
-            padding: 20px;
-            font-weight: bold;
-            color: var(--odoo-secondary);
-        }
-        
-        /* Contenedor principal de Inventario y Botón */
-        #inventory-and-export-container {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            flex-wrap: wrap;
-            margin-bottom: 30px;
-            gap: 20px;
-        }
-
-        /* Tarjetas de Inventario (Estilo Kanban) */
-        #inventory-container { 
-            display: flex; 
-            gap: 12px; 
-            flex-wrap: wrap;
-            margin-top: 10px;
-        }
-        
-        .inventory-card { 
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 12px 15px; 
-            border-radius: 6px; 
-            background: #fff;
-            border: 1px solid var(--border-color); 
-            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-            min-width: 140px;
-        }
-
-        .inventory-card.inv-danger { border-left: 4px solid #dc3545; background-color: #fff5f5; }
-        .inventory-card.inv-warning { border-left: 4px solid #fd7e14; background-color: #fff9f5; }
-        .inventory-card.inv-normal { border-left: 4px solid var(--odoo-secondary); }
-
-        .inv-icon { font-size: 24px; }
-        .inv-details { display: flex; flex-direction: column; }
-        .inv-name { font-size: 11px; font-weight: 600; color: #666; letter-spacing: 0.5px; }
-        .inv-count { font-size: 18px; font-weight: 700; color: #212529; }
-        .inv-total { font-size: 13px; color: #888; font-weight: 400; }
-
-        /* Botón de Exportar */
-        .export-btn {
-            padding: 10px 20px;
-            background-color: var(--odoo-primary); 
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-weight: 600;
-            font-size: 13px;
-            text-transform: uppercase;
-            transition: opacity 0.2s;
-            box-shadow: 0 2px 4px rgba(113, 75, 103, 0.2);
-        }
-        .export-btn:hover { opacity: 0.9; }
-
-        /* Pestañas (Tabs Odoo Style) */
-        #tabs-container { 
-            display: flex; 
-            border-bottom: 1px solid var(--border-color); 
-            margin-bottom: 25px; 
-            overflow-x: auto; 
-        }
-        .tab-button {
-            padding: 12px 20px;
-            border: none;
-            background: transparent;
-            cursor: pointer;
-            font-weight: 500;
-            font-size: 14px;
-            color: #666;
-            transition: all 0.2s;
-            border-bottom: 2px solid transparent;
-            white-space: nowrap;
-        }
-        .tab-button:hover { color: var(--odoo-secondary); }
-        .tab-button.active { 
-            color: var(--odoo-secondary); 
-            border-bottom: 2px solid var(--odoo-secondary); 
-            font-weight: 600;
-        }
-        .tab-content { display: none; }
-        .tab-content.active { display: block; animation: fadeIn 0.3s ease; }
-        
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-
-        /* Buscador Odoo Style */
-        .search-bar { display: flex; gap: 10px; margin-bottom: 20px; align-items: center; }
-        .search-bar label { font-size: 13px; font-weight: 600; color: #555; }
-        .search-bar input { 
-            padding: 10px 15px; 
-            width: 350px; 
-            border: 1px solid var(--border-color); 
-            border-radius: 4px; 
-            font-size: 14px;
-            background-color: #fff;
-            transition: border-color 0.2s;
-        }
-        .search-bar input:focus { outline: none; border-color: var(--odoo-secondary); box-shadow: 0 0 0 2px rgba(1,126,132,0.1); }
-        
-        /* Tablas Odoo Style */
-        .table-container { overflow-x: auto; border: 1px solid var(--border-color); border-radius: 6px; } 
-        table { width: 100%; border-collapse: collapse; background-color: white; font-size: 13px; }
-        
-        th, td { padding: 12px 10px; border-bottom: 1px solid var(--border-color); text-align: left; }
-        th { 
-            background-color: #f8f9fa; 
-            color: #495057; 
-            font-weight: 600; 
-            text-transform: uppercase; 
-            font-size: 11px;
-            letter-spacing: 0.5px;
-        }
-        
-        .odoo-row:hover { background-color: var(--hover-bg); }
-
-        /* Ajustes de columnas para que no se estiren al infinito */
-        td:nth-child(4), td:nth-child(3) { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        
-        /* Badges de Estado */
-        .status-badge {
-            padding: 4px 8px;
-            border-radius: 12px;
-            font-size: 11px;
-            font-weight: 600;
-            display: inline-block;
-        }
-        .badge-pending { background-color: #f1f3f5; color: #495057; }
-        .badge-success { background-color: #d4edda; color: #155724; }
-        .badge-info { background-color: #d1ecf1; color: #0c5460; }
-
-        /* Botones de Acción en Tabla */
-        .table-button {
-            padding: 6px 10px; 
-            font-size: 11px; 
-            border: none;
-            border-radius: 3px;
-            cursor: pointer;
-            font-weight: 600;
-            color: white;
-            transition: opacity 0.2s;
-            white-space: nowrap;
-            text-transform: uppercase;
-        }
-        .table-button:hover { opacity: 0.85; }
-        
-        .btn-primary { background-color: var(--odoo-secondary); }
-        .btn-secondary { background-color: #6c757d; }
-        .btn-warning { background-color: #f0ad4e; color: #fff; }
-        .btn-danger { background-color: #dc3545; }
-        .btn-edit { background-color: var(--odoo-primary); }
-
-        /* Estadísticas */
-        #estadisticas .stats-container { display: flex; gap: 30px; flex-wrap: wrap; }
-        #estadisticas .stats-group { flex: 1; min-width: 300px; margin-bottom: 20px; background: #fff; border: 1px solid #eee; border-radius: 6px; padding: 20px; }
-        #estadisticas h3 { color: var(--odoo-primary); font-size: 15px; margin-top: 0; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px;}
-        #estadisticas table { border: none; }
-        #estadisticas th { background: transparent; border-bottom: 2px solid #eee; }
-        #estadisticas td { border-bottom: 1px solid #f1f1f1; }
-
-        /* Móvil */
-        @media (max-width: 768px) {
-            .container { padding: 15px; }
-            h1 { font-size: 22px; }
-            #inventory-and-export-container { flex-direction: column; align-items: stretch; }
-            .inventory-card { min-width: 100px; padding: 10px; }
-            .search-bar { flex-direction: column; align-items: flex-start; }
-            .search-bar input { width: 100%; }
-        }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Control Obsequios — Vista Web</title>
+  <link rel="stylesheet" href="css/styles.css" />
 </head>
 <body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="sidebar-title">CONTROL OBSEQUIOS</div>
+      <div class="sidebar-sub">Vista web · sync optimizado</div>
 
-<div class="container">
-    <h1>CONTROL DE OBSEQUIOS GRUPO RECALFRENO</h1>
-    
-    <div id="loading" class="loading">Sincronizando con base de datos...</div>
-    
-    <div id="inventory-and-export-container">
-        <div style="flex-grow: 1;">
-            <h2>Inventario en Tiempo Real</h2>
-            <div id="inventory-container">
-                </div>
-        </div>
-        
-        <div class="export-btn-container">
-            <button id="export-clients-btn" class="export-btn">
-                Exportar Reporte (XLSX)
-            </button>
-        </div>
-    </div>
-    
-    <div id="tabs-container">
-        <button class="tab-button" data-target="obsequios-enviados">📦 OBSEQUIOS ENVIADOS</button>
-        <button class="tab-button" data-target="envios-confirmados">✅ ENVÍOS CONFIRMADOS</button>
-        <button class="tab-button" data-target="envios-manuales">🔍 CONTROL GENERAL</button>
-        <button class="tab-button" data-target="estadisticas">📊 ESTADÍSTICAS</button>
-    </div>
+      <button class="nav-item active" data-tab="0" type="button">
+        <span class="nav-icon">📋</span>
+        <span class="nav-label">En proceso</span>
+        <span class="nav-count" id="count-0">0</span>
+      </button>
+      <button class="nav-item" data-tab="1" type="button">
+        <span class="nav-icon">📦</span>
+        <span class="nav-label">No Enviados</span>
+        <span class="nav-count" id="count-1">0</span>
+      </button>
+      <button class="nav-item" data-tab="2" type="button">
+        <span class="nav-icon">🚚</span>
+        <span class="nav-label">Enviados</span>
+        <span class="nav-count" id="count-2">0</span>
+      </button>
+      <button class="nav-item" data-tab="3" type="button">
+        <span class="nav-icon">✅</span>
+        <span class="nav-label">Cerrados</span>
+        <span class="nav-count" id="count-3">0</span>
+      </button>
+      <button class="nav-item" data-tab="4" type="button">
+        <span class="nav-icon">📊</span>
+        <span class="nav-label">Estadísticas</span>
+      </button>
 
-    <div class="tab-content" id="obsequios-enviados">
-        <div class="table-container">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Acción</th><th>TOP</th><th>RUC</th><th>Cliente</th><th>Obsequios</th><th>Tipo de Envío</th><th>Vendedores</th><th>Fecha Envío</th><th>Revertir</th>
-                    </tr>
-                </thead>
-                <tbody id="sent-table-body"></tbody>
-            </table>
-        </div>
-    </div>
+      <button class="btn-refresh" id="btn-refresh" type="button">🔄 Actualizar datos</button>
+    </aside>
 
-    <div class="tab-content" id="envios-confirmados">
-        <div class="table-container">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Estado</th><th>TOP</th><th>Cliente</th><th>Obsequios</th><th>Tipo de Envío</th><th>Vendedores</th><th>Fecha Confirmación</th><th>Revertir</th>
-                    </tr>
-                </thead>
-                <tbody id="confirmed-table-body"></tbody>
-            </table>
-        </div>
-    </div>
+    <main class="main">
+      <div class="brand">
+        GRUPO RECALFRENO
+        <span class="badge-web">Web · sync 5 min</span>
+      </div>
 
-    <div class="tab-content" id="envios-manuales">
-        <div class="search-bar">
-            <label>Buscar Cliente:</label>
-            <input type="text" id="search-input" placeholder="Escribe el nombre o RUC para filtrar...">
+      <div class="kpi-row" id="kpi-row">
+        <div class="kpi-card">
+          <div class="kpi-icon balon">⚽</div>
+          <div>
+            <div class="kpi-title">Balones enviados</div>
+            <div class="kpi-value" id="kpi-balon">— / —</div>
+            <div class="kpi-sub" id="kpi-balon-sub">Restante: —</div>
+          </div>
         </div>
-        <div class="table-container">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Envío Cliente</th><th>Envío Vendedor</th><th>Status</th><th>TOP</th><th>Cliente</th><th>Obsequios</th><th>Tipo de Envío</th><th>Vendedores</th><th>Editar</th>
-                    </tr>
-                </thead>
-                <tbody id="manual-table-body"></tbody>
-            </table>
+        <div class="kpi-card">
+          <div class="kpi-icon camiseta">👕</div>
+          <div>
+            <div class="kpi-title">Camisetas enviadas</div>
+            <div class="kpi-value" id="kpi-camiseta">— / —</div>
+            <div class="kpi-sub" id="kpi-camiseta-sub">Restante: —</div>
+          </div>
         </div>
-    </div>
+      </div>
 
-    <div class="tab-content" id="estadisticas">
-        <div class="stats-container">
-            <div class="stats-group">
-                <h3>Resumen de Clientes por TOP</h3>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Categoría</th><th>Total Clientes</th><th>Enviados</th><th>Confirmados</th>
-                        </tr>
-                    </thead>
-                    <tbody id="stats-top-table-body"></tbody>
-                </table>
-            </div>
-            
-            <div class="stats-group">
-                <h3>Consumo Total de Inventario</h3>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Obsequio</th><th>Stock (Actual / Inicial)</th><th>Consumo Real</th>
-                        </tr>
-                    </thead>
-                    <tbody id="stats-inventory-table-body"></tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-</div>
+      <div class="status-bar" id="status-bar">Conectando…</div>
 
+      <div id="table-section">
+        <div class="toolbar">
+          <input class="search-input" id="search" type="search" placeholder="Buscar por nombre o RUC…" />
+          <button class="btn-action success" id="btn-enviar" type="button" disabled>
+            ENVIAR
+          </button>
+          <button class="btn-action primary" id="btn-confirm" type="button" disabled>
+            Confirmar envío
+          </button>
+          <button class="btn-action danger" id="btn-delete" type="button" disabled>
+            🗑 Eliminar envío
+          </button>
+          <button class="btn-action secondary" id="btn-revert" type="button" disabled>
+            ↩ Volver a Enviados
+          </button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead id="table-head"></thead>
+            <tbody id="table-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="stats-panel" id="stats-panel"></div>
+    </main>
+  </div>
+
+  <div class="toast" id="toast" role="status"></div>
+
+  <script src="js/config.js"></script>
+  <script src="js/campos.js"></script>
+  <script src="js/business.js"></script>
+  <script src="js/sync.js"></script>
+  <script src="js/app.js"></script>
 </body>
 </html>
