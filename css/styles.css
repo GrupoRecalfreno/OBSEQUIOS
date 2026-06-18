@@ -100,6 +100,18 @@ body {
 
 .btn-refresh:hover { background: #f8f9fa; border-color: #a8c4e8; }
 
+.btn-export {
+  margin-top: 8px;
+  background: var(--primary-light);
+  color: var(--primary);
+  border-color: #a8c4e8;
+  font-weight: 700;
+}
+
+.btn-export:hover {
+  background: #dce9f9;
+}
+
 .main {
   flex: 1;
   padding: 16px 24px 24px;
@@ -286,6 +298,22 @@ tr.selected td { background: var(--primary-light); }
 .top-badge.t1 { color: #c2410c; }
 .top-badge.t2 { color: #ca8a04; }
 .top-badge.t3 { color: #047857; }
+
+.estado-badge {
+  font-weight: 700;
+  font-size: 12px;
+}
+.estado-por-enviar { color: #ca8a04; }
+.estado-facturado { color: #1e5aa8; }
+.estado-separado { color: #6c757d; }
+.estado-sep-fac { color: #047857; }
+
+.cell-multiline {
+  white-space: pre-line;
+  font-size: 12px;
+  line-height: 1.45;
+  max-width: 320px;
+}
 
 .stats-panel { display: none; }
 .stats-panel.visible { display: block; }

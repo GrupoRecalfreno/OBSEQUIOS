@@ -61,6 +61,94 @@ function calculateAlertStatus(currStatus, hasFactura, hasCotizacion) {
   return "POR ENVIAR";
 }
 
+function tieneRefsPedidoOFactura(client) {
+  const peds = listaOdoo(client?.PEDIDOS_ODOO);
+  const cots = listaOdoo(client?.COTIZACIONES_ODOO);
+  const facs = listaOdoo(client?.FACTURAS_ODOO);
+  const fpo = mapaOdoo(client?.FACTURA_POR_ORIGEN_ODOO);
+  return (
+    peds.length > 0 ||
+    cots.length > 0 ||
+    facs.length > 0 ||
+    Object.keys(fpo).length > 0
+  );
+}
+
+function shouldShowInEnProcesoTab(client) {
+  const est = String(client?.ESTADO_ENVIO || "POR ENVIAR").toUpperCase();
+  if (isEstadoEnviado(est) || est === "CERRADO") return false;
+  if (est === "SEPARADO") return true;
+  if (est === "POR ENVIAR" || est === "FACTURADO") {
+    return tieneRefsPedidoOFactura(client);
+  }
+  return false;
+}
+
+function fechaCalendarioEcuador(isoStr) {
+  if (!isoStr) return null;
+  const t = String(isoStr).trim().slice(0, 10);
+  const m = t.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  return new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
+}
+
+function hoyEcuadorDate() {
+  const ec = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Guayaquil" }));
+  return new Date(ec.getFullYear(), ec.getMonth(), ec.getDate());
+}
+
+function etiquetaRelativaFecha(isoStr) {
+  const fecha = fechaCalendarioEcuador(isoStr);
+  if (!fecha) return "";
+  const hoy = hoyEcuadorDate();
+  const diff = Math.round((hoy - fecha) / 86400000);
+  if (diff === 0) return "hoy";
+  if (diff === 1) return "ayer";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(fecha.getDate())}/${pad(fecha.getMonth() + 1)}/${fecha.getFullYear()}`;
+}
+
+/** Columna pedidos/facturas estilo app escritorio (desde refs Firebase). */
+function formatPedidosFacturasEnProceso(client) {
+  const pre = client?.PEDIDO_ODOO;
+  if (pre && String(pre).trim() && String(pre).toLowerCase() !== "n/d") {
+    return String(pre).trim();
+  }
+
+  const peds = listaOdoo(client?.PEDIDOS_ODOO);
+  const cots = listaOdoo(client?.COTIZACIONES_ODOO);
+  const ordenes = [...new Set([...peds, ...cots])];
+  const fpo = mapaOdoo(client?.FACTURA_POR_ORIGEN_ODOO);
+  const fechasPed = mapaOdoo(client?.FECHAS_PEDIDOS_ODOO);
+  const fechasFac = mapaOdoo(client?.FECHAS_FACTURAS_ODOO);
+  const facsSueltas = listaOdoo(client?.FACTURAS_ODOO);
+
+  const bloques = [];
+
+  for (const ord of ordenes) {
+    const fac = fpo[ord];
+    const relPed = etiquetaRelativaFecha(fechasPed[ord]);
+    const izq = relPed ? `${ord} / ${relPed}` : ord;
+    if (fac) {
+      const relFac = etiquetaRelativaFecha(fechasFac[fac]);
+      bloques.push(`${izq} --- fv ${fac}${relFac ? ` / ${relFac}` : ""}`);
+    } else {
+      bloques.push(`${izq} --- no facturado`);
+    }
+  }
+
+  for (const fac of facsSueltas) {
+    const ya = bloques.some((b) => b.includes(fac));
+    if (!ya) {
+      const relFac = etiquetaRelativaFecha(fechasFac[fac]);
+      bloques.push(`Fac: ${fac}${relFac ? ` / ${relFac}` : ""}`);
+    }
+  }
+
+  if (bloques.length) return bloques.join("\n");
+  return formatPedidosFacturas(client);
+}
+
 function shouldShowInSeparadosTab(currStatus, hasFactura, hasCotizacion) {
   const est = String(currStatus || "").toUpperCase();
   if (isEstadoEnviado(est) || est === "CERRADO") return false;
@@ -162,8 +250,11 @@ function collectRowsForTab(tabIndex, clients) {
 
   if (tabIndex === 0) {
     for (const [key, v] of entries) {
-      if (String(v.ESTADO_ENVIO || "").toUpperCase() !== "SEPARADO") continue;
-      const { hasFactura } = actividadDesdeRefsCliente(v);
+      if (!shouldShowInEnProcesoTab(v)) continue;
+      const { hasFactura, hasCotizacion } = actividadDesdeRefsCliente(v);
+      const curr = v.ESTADO_ENVIO || "POR ENVIAR";
+      const estadoUi = calculateAlertStatus(curr, hasFactura, hasCotizacion);
+      if (!ESTADOS_EN_PROCESO_UI.has(estadoUi)) continue;
       rows.push({
         key,
         ruc: v.RUC || "n/d",
@@ -171,8 +262,9 @@ function collectRowsForTab(tabIndex, clients) {
         top: v.TOP || "TOP 3",
         ranking: String(v.RANKING ?? "n/d"),
         obsequios: getTopGiftInfo(v.TOP).text,
-        estado: hasFactura ? "SEPARADO - FACTURADO" : "SEPARADO",
-        extra: formatPedidosFacturas(v),
+        estado: estadoUi,
+        extra: formatPedidosFacturasEnProceso(v),
+        extraMultiline: true,
         vendedor: v.VENDEDOR || "n/d",
       });
     }
@@ -225,8 +317,65 @@ function collectRowsForTab(tabIndex, clients) {
   return rows;
 }
 
+function textoSeparoOEnvio(client) {
+  const partes = [];
+  const nomSep = String(client?.NOMBRE_OPERARIO_SEPARACION || "").trim();
+  const codSep = String(client?.CODIGO_OPERARIO_SEPARACION || "").trim();
+  if (nomSep) {
+    partes.push(`Separó: ${codSep ? `${codSep} - ` : ""}${nomSep}`);
+  }
+  const directo = personasCanonicas(client?.PERSONAS_QUE_HAN_ENVIADO_DIRECTO);
+  if (directo?.nombre) {
+    partes.push(`Envió: ${directo.codigo} - ${directo.nombre}`);
+  } else {
+    const est = String(client?.ESTADO_ENVIO || "").toUpperCase();
+    const tipo = String(client?.TIPO_ENVIO || "").trim();
+    if ((isEstadoEnviado(est) || est === "CERRADO") && tipo) {
+      partes.push(`Envió: ${tipo}`);
+    }
+  }
+  if (!partes.length && client?.REGISTRO_SEPARACION) {
+    return String(client.REGISTRO_SEPARACION);
+  }
+  return partes.join(" | ");
+}
+
+function buildExportRows(clients) {
+  return Object.values(clients || {}).map((v) => ({
+    RUC: v.RUC || "",
+    "NOMBRE CLIENTE": v.NOMBRE_CLIENTE || "",
+    TOP: v.TOP || "",
+    RANKING: String(v.RANKING ?? ""),
+    ESTADO: v.ESTADO_ENVIO || "",
+    VENDEDOR: v.VENDEDOR || "",
+    "SEPARÓ / ENVIÓ": textoSeparoOEnvio(v),
+  }));
+}
+
+const EXPORT_COLUMNAS = [
+  "RUC",
+  "NOMBRE CLIENTE",
+  "TOP",
+  "RANKING",
+  "ESTADO",
+  "VENDEDOR",
+  "SEPARÓ / ENVIÓ",
+];
+
+const EXPORT_ANCHOS = [14, 36, 10, 10, 14, 16, 40];
+
+function descargarReporteExcel(filas) {
+  if (typeof XLSX === "undefined") {
+    throw new Error("No se pudo cargar el generador Excel. Recargue la página.");
+  }
+  const hoja = XLSX.utils.json_to_sheet(filas, { header: EXPORT_COLUMNAS });
+  hoja["!cols"] = EXPORT_ANCHOS.map((wch) => ({ wch }));
+  const libro = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(libro, hoja, "Obsequios");
+  XLSX.writeFile(libro, "Reporte_General_Obsequios.xlsx");
+}
+
 function computeNavCounts(clients) {
-  let separados = 0;
   let noEnviados = 0;
   let enviados = 0;
   let cerrados = 0;
@@ -235,9 +384,13 @@ function computeNavCounts(clients) {
     if (est === "POR ENVIAR") noEnviados++;
     else if (est === "CERRADO") cerrados++;
     else if (isEstadoEnviado(est)) enviados++;
-    else if (est === "SEPARADO") separados++;
   }
-  return { 0: separados, 1: noEnviados, 2: enviados, 3: cerrados };
+  return {
+    0: collectRowsForTab(0, clients).length,
+    1: noEnviados,
+    2: enviados,
+    3: cerrados,
+  };
 }
 
 function computeKpis(clients, inventario) {
