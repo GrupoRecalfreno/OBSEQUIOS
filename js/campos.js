@@ -96,15 +96,116 @@ function personasCanonicas(valor) {
   return null;
 }
 
-function listaOdoo(valor) {
-  if (!valor) return [];
+function unicosNumerosOdoo(nums) {
+  const out = [];
+  const seen = new Set();
+  for (const n of nums) {
+    const s = String(n).trim();
+    if (s && !seen.has(s)) {
+      seen.add(s);
+      out.push(s);
+    }
+  }
+  return out;
+}
+
+function extraerNumerosOdoo(valor) {
+  if (valor == null) return [];
   if (Array.isArray(valor)) {
-    return valor
-      .map((x) => String(x).trim())
-      .filter((x) => x && x.toLowerCase() !== "n/d");
+    const out = [];
+    for (const item of valor) out.push(...extraerNumerosOdoo(item));
+    return unicosNumerosOdoo(out);
+  }
+  if (typeof valor === "object") {
+    const out = [];
+    for (const [k, v] of Object.entries(valor)) {
+      out.push(...extraerNumerosOdoo(k));
+      out.push(...extraerNumerosOdoo(v));
+    }
+    return unicosNumerosOdoo(out);
   }
   const s = String(valor).trim();
-  return s && s.toLowerCase() !== "n/d" ? [s] : [];
+  if (!s || s.toLowerCase() === "n/d") return [];
+  const found = s.match(/S\d+/gi);
+  if (found && found.length) return unicosNumerosOdoo(found.map((x) => x.toUpperCase()));
+  return [s];
+}
+
+function listaOdoo(valor) {
+  return extraerNumerosOdoo(valor);
+}
+
+function formatGroupedDocsText(ped, cot, fac) {
+  const parts = [];
+  const peds = unicosNumerosOdoo([...(ped || []), ...(cot || [])]);
+  if (peds.length) parts.push(`Ped: ${peds.join(", ")}`);
+  if (cot && cot.length) parts.push(`Cot: ${cot.join(", ")}`);
+  if (fac && fac.length) parts.push(`Fac: ${fac.join(", ")}`);
+  return parts.length ? parts.join(" | ") : "n/d";
+}
+
+function sanearClienteRefsOdoo(client) {
+  if (!client || typeof client !== "object") return client;
+  const out = JSON.parse(JSON.stringify(client));
+  let ped = listaOdoo(out.PEDIDOS_ODOO);
+  let cot = listaOdoo(out.COTIZACIONES_ODOO);
+  let fac = listaOdoo(out.FACTURAS_ODOO);
+  const fechasCot = sanearMapaFechasOdoo(out.FECHAS_COTIZACIONES_ODOO);
+  const fechasPed = sanearMapaFechasOdoo(out.FECHAS_PEDIDOS_ODOO);
+  const fpoRaw = mapaOdoo(out.FACTURA_POR_ORIGEN_ODOO);
+  const fpo = {};
+  for (const [k, v] of Object.entries(fpoRaw)) {
+    const nums = extraerNumerosOdoo(k);
+    if (nums.length && v) fpo[nums[0]] = v;
+  }
+  for (const n of Object.keys(fechasCot)) {
+    if (!cot.includes(n)) cot.push(n);
+  }
+  for (const n of Object.keys(fechasPed)) {
+    if (!ped.includes(n)) ped.push(n);
+  }
+  ped = unicosNumerosOdoo(ped);
+  cot = unicosNumerosOdoo(cot);
+  const facsFpo = unicosNumerosOdoo(Object.values(fpo));
+  fac = unicosNumerosOdoo([...fac, ...facsFpo]);
+  let fechasFac = sanearMapaFechasOdoo(out.FECHAS_FACTURAS_ODOO);
+  const facsPermitidas = new Set(fac);
+  if (facsPermitidas.size) {
+    fechasFac = Object.fromEntries(
+      Object.entries(fechasFac).filter(([k]) => facsPermitidas.has(k))
+    );
+  } else {
+    fechasFac = {};
+  }
+  if (ped.length) out.PEDIDOS_ODOO = ped;
+  else delete out.PEDIDOS_ODOO;
+  if (cot.length) out.COTIZACIONES_ODOO = cot;
+  else delete out.COTIZACIONES_ODOO;
+  if (fac.length) out.FACTURAS_ODOO = fac;
+  else delete out.FACTURAS_ODOO;
+  if (Object.keys(fechasCot).length) out.FECHAS_COTIZACIONES_ODOO = fechasCot;
+  if (Object.keys(fechasPed).length) out.FECHAS_PEDIDOS_ODOO = fechasPed;
+  if (Object.keys(fechasFac).length) out.FECHAS_FACTURAS_ODOO = fechasFac;
+  else if (Object.keys(sanearMapaFechasOdoo(out.FECHAS_FACTURAS_ODOO)).length > Math.max(fac.length * 2, 5)) {
+    delete out.FECHAS_FACTURAS_ODOO;
+  }
+  if (Object.keys(fpo).length) out.FACTURA_POR_ORIGEN_ODOO = fpo;
+  if (ped.length || cot.length || fac.length) {
+    out.PEDIDO_ODOO = formatGroupedDocsText(ped, cot, fac);
+  }
+  delete out.COMPRA_ACTIVA;
+  return out;
+}
+
+function sanearMapaFechasOdoo(valor) {
+  if (!valor || typeof valor !== "object" || Array.isArray(valor)) return {};
+  const out = {};
+  for (const [k, v] of Object.entries(valor)) {
+    const val = String(v ?? "").trim().slice(0, 10);
+    if (!val || val.toLowerCase() === "n/d") continue;
+    for (const n of extraerNumerosOdoo(k)) out[n] = val;
+  }
+  return out;
 }
 
 function mapaOdoo(valor) {
@@ -116,6 +217,23 @@ function mapaOdoo(valor) {
     if (key && val && val.toLowerCase() !== "n/d" && val.toLowerCase() !== "none") {
       out[key] = val;
     }
+  }
+  return out;
+}
+
+function prepararClienteParaLectura(client) {
+  if (!client || typeof client !== "object") return client;
+  const limpio = sanearClienteRefsOdoo(JSON.parse(JSON.stringify(client)));
+  delete limpio[CAMPO_OPERADOR_TS];
+  for (const k of CAMPOS_ENVIO_LEGACY_MEZCLADOS) delete limpio[k];
+  return limpio;
+}
+
+function prepararClientesParaLectura(clientes) {
+  if (!clientes || typeof clientes !== "object") return {};
+  const out = {};
+  for (const [k, v] of Object.entries(clientes)) {
+    if (v && typeof v === "object") out[k] = prepararClienteParaLectura(v);
   }
   return out;
 }
@@ -166,11 +284,7 @@ function clientesParaCache(clientes) {
 
 function limpiarClienteDescargado(client) {
   if (!client || typeof client !== "object") return client;
-  const out = { ...client };
-  delete out.COMPRA_ACTIVA;
-  delete out[CAMPO_OPERADOR_TS];
-  for (const k of CAMPOS_ENVIO_LEGACY_MEZCLADOS) delete out[k];
-  return out;
+  return sanearClienteRefsOdoo(client);
 }
 
 function normalizarValorSync(valor) {

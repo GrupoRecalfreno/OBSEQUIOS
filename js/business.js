@@ -33,21 +33,10 @@ function textoColumnaEnviados(client) {
   return tipo;
 }
 
-/** Actividad desde refs congeladas en Firebase (§36 SEPARADO, §38 ORTIZ). */
+/** Actividad desde refs congeladas (§38–41) — misma lógica que _get_client_odoo_activity. */
 function actividadDesdeRefsCliente(client) {
-  const est = String(client?.ESTADO_ENVIO || "").toUpperCase();
-  const facs = listaOdoo(client.FACTURAS_ODOO);
-  const fpo = mapaOdoo(client.FACTURA_POR_ORIGEN_ODOO);
-  const peds = listaOdoo(client.PEDIDOS_ODOO);
-  const cots = listaOdoo(client.COTIZACIONES_ODOO);
-  const tieneFactura = facs.length > 0 || Object.keys(fpo).length > 0;
-  const tieneCotizacion = cots.length > 0;
-  const tienePedido = peds.length > 0 || cots.length > 0;
-
-  if (est === "SEPARADO") {
-    return { hasFactura: tieneFactura, hasCotizacion: tienePedido || tieneCotizacion };
-  }
-  return { hasFactura: tieneFactura, hasCotizacion: tieneCotizacion || tienePedido };
+  const { hasFactura, hasCotizacion } = getClientOdooActivity(client);
+  return { hasFactura, hasCotizacion };
 }
 
 function calculateAlertStatus(currStatus, hasFactura, hasCotizacion) {
@@ -61,27 +50,10 @@ function calculateAlertStatus(currStatus, hasFactura, hasCotizacion) {
   return "POR ENVIAR";
 }
 
-function tieneRefsPedidoOFactura(client) {
-  const peds = listaOdoo(client?.PEDIDOS_ODOO);
-  const cots = listaOdoo(client?.COTIZACIONES_ODOO);
-  const facs = listaOdoo(client?.FACTURAS_ODOO);
-  const fpo = mapaOdoo(client?.FACTURA_POR_ORIGEN_ODOO);
-  return (
-    peds.length > 0 ||
-    cots.length > 0 ||
-    facs.length > 0 ||
-    Object.keys(fpo).length > 0
-  );
-}
-
 function shouldShowInEnProcesoTab(client) {
   const est = String(client?.ESTADO_ENVIO || "POR ENVIAR").toUpperCase();
-  if (isEstadoEnviado(est) || est === "CERRADO") return false;
-  if (est === "SEPARADO") return true;
-  if (est === "POR ENVIAR" || est === "FACTURADO") {
-    return tieneRefsPedidoOFactura(client);
-  }
-  return false;
+  const { hasFactura, hasCotizacion } = getClientOdooActivity(client);
+  return shouldShowInSeparadosTab(est, hasFactura, hasCotizacion);
 }
 
 function fechaCalendarioEcuador(isoStr) {
@@ -92,61 +64,20 @@ function fechaCalendarioEcuador(isoStr) {
   return new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
 }
 
+const MESES_ES = [
+  "enero", "febrero", "marzo", "abril", "mayo", "junio",
+  "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+];
+const DIAS_ES = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+
 function hoyEcuadorDate() {
   const ec = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Guayaquil" }));
   return new Date(ec.getFullYear(), ec.getMonth(), ec.getDate());
 }
 
-function etiquetaRelativaFecha(isoStr) {
-  const fecha = fechaCalendarioEcuador(isoStr);
-  if (!fecha) return "";
-  const hoy = hoyEcuadorDate();
-  const diff = Math.round((hoy - fecha) / 86400000);
-  if (diff === 0) return "hoy";
-  if (diff === 1) return "ayer";
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${pad(fecha.getDate())}/${pad(fecha.getMonth() + 1)}/${fecha.getFullYear()}`;
-}
-
-/** Columna pedidos/facturas estilo app escritorio (desde refs Firebase). */
+/** Columna pedidos/facturas — espejo de _format_columna_pedidos_facturas_unificada (§41). */
 function formatPedidosFacturasEnProceso(client) {
-  const pre = client?.PEDIDO_ODOO;
-  if (pre && String(pre).trim() && String(pre).toLowerCase() !== "n/d") {
-    return String(pre).trim();
-  }
-
-  const peds = listaOdoo(client?.PEDIDOS_ODOO);
-  const cots = listaOdoo(client?.COTIZACIONES_ODOO);
-  const ordenes = [...new Set([...peds, ...cots])];
-  const fpo = mapaOdoo(client?.FACTURA_POR_ORIGEN_ODOO);
-  const fechasPed = mapaOdoo(client?.FECHAS_PEDIDOS_ODOO);
-  const fechasFac = mapaOdoo(client?.FECHAS_FACTURAS_ODOO);
-  const facsSueltas = listaOdoo(client?.FACTURAS_ODOO);
-
-  const bloques = [];
-
-  for (const ord of ordenes) {
-    const fac = fpo[ord];
-    const relPed = etiquetaRelativaFecha(fechasPed[ord]);
-    const izq = relPed ? `${ord} / ${relPed}` : ord;
-    if (fac) {
-      const relFac = etiquetaRelativaFecha(fechasFac[fac]);
-      bloques.push(`${izq} --- fv ${fac}${relFac ? ` / ${relFac}` : ""}`);
-    } else {
-      bloques.push(`${izq} --- no facturado`);
-    }
-  }
-
-  for (const fac of facsSueltas) {
-    const ya = bloques.some((b) => b.includes(fac));
-    if (!ya) {
-      const relFac = etiquetaRelativaFecha(fechasFac[fac]);
-      bloques.push(`Fac: ${fac}${relFac ? ` / ${relFac}` : ""}`);
-    }
-  }
-
-  if (bloques.length) return bloques.join("\n");
-  return formatPedidosFacturas(client);
+  return formatColumnaPedidosFacturasUnificada(client);
 }
 
 function shouldShowInSeparadosTab(currStatus, hasFactura, hasCotizacion) {

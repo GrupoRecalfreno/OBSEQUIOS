@@ -44,7 +44,7 @@ class FirebaseSync {
     try {
       const c = localStorage.getItem(CONFIG.LS_CLIENTES);
       const i = localStorage.getItem(CONFIG.LS_INVENTARIO);
-      if (c) this.clients = JSON.parse(c);
+      if (c) this.clients = prepararClientesParaLectura(JSON.parse(c));
       if (i) this.inventario = JSON.parse(i);
       return Boolean(c);
     } catch {
@@ -58,12 +58,7 @@ class FirebaseSync {
   }
 
   _normalizarClientesDescargados(raw) {
-    if (!raw || typeof raw !== "object") return {};
-    const out = {};
-    for (const [k, v] of Object.entries(raw)) {
-      if (v && typeof v === "object") out[k] = limpiarClienteDescargado(v);
-    }
-    return out;
+    return prepararClientesParaLectura(raw);
   }
 
   async _fetchJson(path, cacheKey) {
@@ -137,6 +132,7 @@ class FirebaseSync {
       );
       this._fusionarSnapshotEnCliente(this.clients[fbKey], remotoOperador, incluirReset);
       if (remotoTs) this.clients[fbKey][CAMPO_OPERADOR_TS] = remotoTs;
+      this.clients[fbKey] = prepararClienteParaLectura(this.clients[fbKey]);
       hubo = true;
     }
     return hubo;
