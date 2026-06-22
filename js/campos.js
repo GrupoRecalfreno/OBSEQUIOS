@@ -152,12 +152,7 @@ function sanearClienteRefsOdoo(client) {
   let fac = listaOdoo(out.FACTURAS_ODOO);
   const fechasCot = sanearMapaFechasOdoo(out.FECHAS_COTIZACIONES_ODOO);
   const fechasPed = sanearMapaFechasOdoo(out.FECHAS_PEDIDOS_ODOO);
-  const fpoRaw = mapaOdoo(out.FACTURA_POR_ORIGEN_ODOO);
-  const fpo = {};
-  for (const [k, v] of Object.entries(fpoRaw)) {
-    const nums = extraerNumerosOdoo(k);
-    if (nums.length && v) fpo[nums[0]] = v;
-  }
+  const fpo = facturaPorOrigenExpandida(out.FACTURA_POR_ORIGEN_ODOO);
   for (const n of Object.keys(fechasCot)) {
     if (!cot.includes(n)) cot.push(n);
   }
@@ -216,6 +211,21 @@ function mapaOdoo(valor) {
     const val = String(v ?? "").trim();
     if (key && val && val.toLowerCase() !== "n/d" && val.toLowerCase() !== "none") {
       out[key] = val;
+    }
+  }
+  return out;
+}
+
+/** Expande claves compuestas FPO: "S123494, S123495" → cada S con su FV (§44). */
+function facturaPorOrigenExpandida(valor) {
+  const raw = mapaOdoo(valor);
+  const out = {};
+  for (const [k, v] of Object.entries(raw)) {
+    const nums = extraerNumerosOdoo(k);
+    if (nums.length) {
+      for (const origin of nums) out[origin] = v;
+    } else {
+      out[k] = v;
     }
   }
   return out;

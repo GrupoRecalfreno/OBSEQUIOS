@@ -38,15 +38,7 @@ function fechasMapFromClient(client, campo) {
 }
 
 function facturaPorOrigenFromClient(client) {
-  const raw = client?.FACTURA_POR_ORIGEN_ODOO;
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-  const out = {};
-  for (const [k, v] of Object.entries(raw)) {
-    const nums = extraerNumerosOdoo(k);
-    const val = String(v ?? "").trim();
-    if (nums.length && val) out[nums[0]] = val;
-  }
-  return out;
+  return facturaPorOrigenExpandida(client?.FACTURA_POR_ORIGEN_ODOO);
 }
 
 function numerosFacturaEnGrupo(group, client) {

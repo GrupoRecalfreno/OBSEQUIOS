@@ -279,6 +279,7 @@ function buildExportRows(clients) {
     RANKING: String(v.RANKING ?? ""),
     ESTADO: v.ESTADO_ENVIO || "",
     VENDEDOR: v.VENDEDOR || "",
+    "NUMERO CELULAR": v.NUMERO_CELULAR || "",
     "SEPARÓ / ENVIÓ": textoSeparoOEnvio(v),
   }));
 }
@@ -290,10 +291,11 @@ const EXPORT_COLUMNAS = [
   "RANKING",
   "ESTADO",
   "VENDEDOR",
+  "NUMERO CELULAR",
   "SEPARÓ / ENVIÓ",
 ];
 
-const EXPORT_ANCHOS = [14, 36, 10, 10, 14, 16, 40];
+const EXPORT_ANCHOS = [14, 36, 10, 10, 14, 16, 22, 40];
 
 function descargarReporteExcel(filas) {
   if (typeof XLSX === "undefined") {
